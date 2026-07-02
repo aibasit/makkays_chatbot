@@ -68,12 +68,15 @@ None new — this module is a thin HTTP adapter over Module 06.
 None new beyond the small helper classes in §8 — business logic lives entirely in the Orchestrator; this module's job is strictly request/response translation plus auth/session/rate-limit concerns.
 
 ## 13. Internal Interfaces
-`POST /chat` handler:
-1. `require_site_api_key` dependency validates header.
-2. `session_id = SessionCookieManager.get_or_create(request, response)`.
-3. `ChatRateLimiter.check(tenant_id=DEFAULT_TENANT_ID, session_id)`.
-4. `result = await Orchestrator.on_turn(tenant_id, session_id, chat_request.message)`.
-5. Build and return `ChatResponse` from `result`.
+`POST /chat` handler — full request lifecycle:
+1. **OPTIONS preflight**: handled automatically by FastAPI's `CORSMiddleware` (registered in Module 01 §19). No explicit OPTIONS route needed here.
+2. `require_site_api_key` dependency: reads `X-Site-Api-Key` header, compares to `settings.site.site_api_key` using `hmac.compare_digest` (constant-time). Raises `HTTPException(status_code=401)` on mismatch or absence.
+3. `session_id = SessionCookieManager.get_or_create(request, response)`: reads cookie `settings.site.session_cookie_name`. If absent or not a valid UUID4 string, generates `str(uuid4())`, sets response cookie `HttpOnly=True, SameSite='Lax', Secure=False, max_age=86400` (24 hours). Returns the session_id string in either case.
+4. `tenant_id = UUID(settings.db.default_tenant_id)` — injected at this layer; the Orchestrator and all downstream modules receive a typed `UUID`, never the raw string.
+5. `ChatRateLimiter.check(tenant_id, session_id)`: issues Redis `INCR ratelimit:chat:{tenant_id}:{session_id}`; if return value == 1, immediately pipeline `EXPIRE ratelimit:chat:{tenant_id}:{session_id} 60`; if counter exceeds `settings.site.chat_rate_limit_per_minute`, raise `HTTPException(status_code=429, detail={"code": "rate_limited"})`.
+6. Validate `chat_request.message.strip()` non-empty, len `<= settings.site.max_message_length` — raise 422 via Pydantic if either fails.
+7. `result = await orchestrator.on_turn(tenant_id, session_id, chat_request.message.strip())`.
+8. Return `ChatResponse(assistant_message=result.assistant_message, intent=result.intent, awaiting_clarification=result.awaiting_clarification)` with the session cookie set on the response.
 
 ## 14. Database Tables
 None new.
@@ -84,10 +87,11 @@ None new.
 | `ratelimit:chat:{tenant_id}:{session_id}` | 60s window | Caps `/chat` calls per session (e.g., 20/min) — distinct from Module 10's per-tool limits, this is the outer request-level guard |
 
 ## 16. API Endpoints
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/chat` | Main conversational endpoint |
-| GET | `/health` | (Module 01, re-listed for completeness of the public surface) |
+| Method | Path | Purpose | Owner |
+|---|---|---|---|
+| POST | `/chat` | Main conversational endpoint | This module (M15) |
+
+Note: `GET /health` is owned by Module 01. `GET /metrics` and `GET /ready` are owned by Module 16. They are not owned or re-implemented by this module.
 
 ## 17. Request Models
 `ChatRequest { message: str }` — validated non-empty, max length (e.g. 4000 chars) to bound LLM context/cost.
@@ -101,9 +105,10 @@ None new.
 - **Tenant resolution**: `DEFAULT_TENANT_ID` (Module 00) used for every request in v4.1 — no per-request tenant resolution logic yet (multi-tenancy is foundational-only per architecture §2.16).
 
 ## 20. Validation Rules
-- `message` non-empty after trim, max 4000 characters.
-- `X-Site-Api-Key` header required; missing or mismatched → 401.
-- Session cookie, if present, must be a well-formed UUID4 string; malformed cookies are treated as absent (a new session is issued) rather than rejected outright.
+- `message`, after `.strip()`, must be non-empty — 422 `{"detail": [{"loc": ["body", "message"], "msg": "message is empty"}]}`.
+- `message` length must be `<= settings.site.max_message_length` (default `4000` characters, measured after strip) — 422 with appropriate detail.
+- `X-Site-Api-Key` header required; missing or mismatched → 401 `{"code": "unauthorized"}`.
+- Session cookie, if present, must be parseable as `UUID(cookie_value)` without raising `ValueError`. If parsing fails, treat as absent and issue a new session. Never return a 4xx for a malformed cookie.
 
 ## 21. Error Handling
 | Error | Handling |
@@ -115,16 +120,21 @@ None new.
 | Orchestrator raises an unhandled exception | Global 500 handler (Module 01), generic body, full detail logged server-side only |
 
 ## 22. Logging Strategy
-- Log every `/chat` call at `INFO`: `tenant_id`, `session_id`, `intent` (post-classification), latency — never log raw `message` content at this layer (that's `conversation_turns`' responsibility, Module 04, which has the full per-turn record already).
-- Log 401/429 occurrences at `WARNING` (potential abuse signal, though full abuse-prevention infra is out of scope).
+- Log every `/chat` call at `INFO`: `tenant_id`, `session_id`, `intent` (post-classification), latency — never log raw `message` content at this layer.
+- Log 401/429 occurrences at `WARNING` (potential abuse signal).
 
 ## 23. Unit Tests
-- `test_session_cookie_created_when_absent`
-- `test_session_cookie_reused_when_present_and_valid`
-- `test_malformed_session_cookie_treated_as_absent`
-- `test_site_key_auth_rejects_missing_header`
-- `test_site_key_auth_rejects_wrong_key`
-- `test_site_key_auth_accepts_correct_key`
+- `test_chat_requires_site_api_key`
+- `test_chat_rejects_missing_api_key_with_401`
+- `test_chat_rejects_wrong_api_key_with_401`
+- `test_chat_empty_message_returns_422`
+- `test_chat_message_too_long_returns_422`
+- `test_chat_rate_limit_returns_429_after_threshold`
+- `test_session_cookie_created_on_first_request`
+- `test_session_cookie_reused_on_subsequent_request`
+- `test_malformed_session_cookie_issues_new_session`
+- `test_tenant_id_is_injected_as_uuid_not_string`
+- `test_rate_limiter_uses_fixed_window_incr_expire`
 
 ## 24. Integration Tests
 - `test_chat_endpoint_full_roundtrip_returns_expected_shape`

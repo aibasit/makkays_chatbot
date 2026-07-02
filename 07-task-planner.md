@@ -15,7 +15,7 @@ what's already known, without hardcoding every combination into the intent
 taxonomy itself.
 
 ## 4. Dependencies
-Module 03 (Facts/Conversation State schemas), Module 09 (Feature Flags — consulted to skip disabled steps).
+Module 03 (Facts and ConversationState schemas — `FactsSchema`, `ConversationStateSchema`), Module 09 (`FeatureFlags` object, received from the Orchestrator), Module 12 (`quote_slots_complete` function imported from `app.quotes.schemas` — the single canonical predicate owner).
 
 ## 5. Folder Structure
 ```
@@ -57,11 +57,18 @@ No persistence of its own — `Plan` is stored by the *caller* into `conversatio
 N/A — stateless, pure function module.
 
 ## 12. Service Layer
-`TaskPlanner.build_plan(intent, facts, state, flags) -> Plan`:
-1. Look up the rule function for `intent` in the registry; raise `UnknownIntentError` if missing.
-2. Call the rule function, which evaluates the ordered condition table (architecture §2.4) and returns an ordered list of step names.
-3. Filter out any step whose corresponding feature flag is off (belt-and-suspenders with Module 09's tool-registration-level gating).
-4. Wrap into `Plan(intent=intent, steps=steps)` and return.
+`TaskPlanner.build_plan(intent_result: IntentResult, facts: FactsSchema, state: ConversationStateSchema, flags: FeatureFlags) -> Plan`:
+- Looks up the rule function for `intent_result.intent`; raises `UnknownIntentError` if not found.
+- Calls the rule function with `(facts, state, flags, intent_result)` — passing the full `IntentResult` gives rule functions access to `spec_question_detected` and `candidates` without importing Module 06's types.
+- Returns the resulting `Plan`.
+
+Rule functions are pure synchronous functions: no DB, no Redis, no LLM calls.
+
+`quote_slots_complete` is imported from `app.quotes.schemas` (Module 12). This is the single canonical definition. The Planner does not define or duplicate this predicate.
+
+`contact_info_newly_captured(state: ConversationStateSchema) -> bool`: returns `state.contact_info_captured == True`. The flag is set in `conversation_state` by the Orchestrator (Module 06) when the LLM-extracted contact fields (contact_name/email/phone in session_facts) become non-None for the first time this session.
+
+`spec_question_detected` is read from `intent_result.spec_question_detected` (populated by Module 06's Tier1RuleEngine). No import of Module 06 types is needed — the value is carried on the `IntentResult` object passed into `build_plan`.
 
 ## 13. Internal Interfaces
 - `build_plan(intent, facts, state, flags) -> Plan` — the only public entrypoint, called by `Orchestrator.on_turn` (Module 06) immediately after intent acceptance.
@@ -82,19 +89,28 @@ N/A.
 ## 18. Response Models
 `Plan` (above), returned in-process to the Orchestrator, then passed to Tool Executor (Module 10) and persisted into `conversation_state.current_plan` via Module 03.
 
-## 19. Business Logic
-Reproduces architecture §2.4's condition table verbatim for `sales_inquiry` as the reference implementation; the same pattern (ordered condition checks over `facts`/`state`/`flags`) is used for other intents (`quote_request`, `technical_support`, `escalation_request`):
+## 19. Business Logic (Rule Functions)
+All rule functions have the signature `fn(facts: FactsSchema, state: ConversationStateSchema, flags: FeatureFlags, intent_result: IntentResult) -> list[str]`.
 
-**`plan_sales_inquiry(facts, state, flags)`**, evaluated in order:
-1. `facts.product_interest is None` → append `retrieve_products`.
-2. `flags.enable_rag and message_has_spec_question` → append `retrieve_docs`. *(`message_has_spec_question` is a simple heuristic flag threaded in from the Router's Tier 1 pass — not a fresh LLM call.)*
-3. `len(candidate_products) > 1` → append `compare`.
-4. `flags.enable_quotes and quote_slots_complete(facts)` → append `generate_quote`.
-5. `flags.enable_quotes and not quote_slots_complete(facts)` → append `request_missing_slots`.
-6. `contact_info_newly_captured(state)` → append `create_lead`.
-7. If no step appended yet → append `respond` (fallback: LLM explains/asks using only already-retrieved context).
+**`plan_sales_inquiry`**:
+| Condition | Steps Added |
+|---|---|
+| Always | `retrieve_products` |
+| `intent_result.spec_question_detected == True` | `+ retrieve_docs` |
+| `flags.enable_quotes and quote_slots_complete(facts)` | `+ generate_quote` |
+| `flags.enable_crm and contact_info_newly_captured(state)` | `+ create_lead` |
+| Always (last step) | `+ respond` |
 
-`quote_slots_complete(facts) -> bool` checks `company`, `product_interest` (mapped to `products`), a `quantity` slot (tracked in Facts — **note**: `quantity` is not in the v4.1 `session_facts` DDL as shown in architecture §2.5; this module treats it as an additional Facts column to be added via a small additive migration owned by Module 03 when Quote Builder, Module 12, is implemented — flagged explicitly here rather than silently assumed), and `budget`.
+`quote_slots_complete(facts)` is imported from `app.quotes.schemas` — single source of truth.
+`contact_info_newly_captured(state)` checks `state.contact_info_captured == True`.
+
+**`plan_quote_request`**: Always `['retrieve_products', 'generate_quote', 'respond']` (quote slots must be complete per the policy check in Module 10, which is the enforcement point; the Planner simply produces the steps and trusts the Executor's policy layer to gate execution).
+
+**`plan_technical_support`**: Always `['retrieve_docs', 'respond']`.
+
+**`plan_escalation_request`**: Always `['respond']` — a human-escalation acknowledgement has a single step: compose a handoff response using the `prompts/system/base_v1.md` system prompt with escalation context.
+
+**`plan_out_of_scope`**: Always `['respond']` — generates a polite out-of-scope message.
 
 ## 20. Validation Rules
 - Rule functions must always return a **non-empty** list — if no condition matches, `respond` is always the guaranteed fallback (enforced by an assertion at the end of every rule function, not left implicit).

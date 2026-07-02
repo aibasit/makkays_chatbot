@@ -57,6 +57,7 @@ pyproject.toml / requirements.txt
 - `Settings(BaseSettings)` — all env-derived configuration, typed and validated at boot.
 - `AppError(Exception)` — base for all domain errors; carries `code: str`, `message: str`, `http_status: int`.
 - `NotFoundError(AppError)`, `ValidationError(AppError)`, `ExternalServiceError(AppError)`, `PolicyViolationError(AppError)` (used from Module 10 onward).
+- `MissingConfigurationError(AppError)` — raised at import time of `config.py` when one or more required env vars are absent or empty; `http_status=500`, non-retryable. Carries a `missing_keys: list[str]` field so all missing keys are reported in a single error, not just the first.
 
 ## 9. Data Models
 None (no persistence in this module).
@@ -92,8 +93,18 @@ None beyond the empty `GET /health`.
 - `HealthResponse { status: Literal["ok"] }`
 
 ## 19. Business Logic
-- On startup: load `Settings`, call `configure_logging`, register all module routers (imported lazily to avoid circular imports), register the global exception handler mapping `AppError` subclasses to JSON error responses using their `http_status`.
-- On shutdown: no-op in this module (later modules add DB/Redis connection teardown here).
+- On startup, `create_app()` executes the following sequence inside a FastAPI `lifespan` context manager:
+  1. `settings = get_settings()` — loads and validates all env vars; raises `MissingConfigurationError` listing every missing/empty required key if any are absent.
+  2. `configure_logging(settings)` — installs the JSON formatter and secret-redaction filter.
+  3. Register `CORSMiddleware` with `allow_origins=settings.site.cors_allow_origins`, `allow_credentials=True`, `allow_methods=["POST", "GET", "OPTIONS"]`, `allow_headers=["Content-Type", "X-Site-Api-Key"]`. This is a **development-only** configuration; the origins list is driven entirely by the `CORS_ALLOW_ORIGINS` env var.
+  4. Register the global exception handler mapping every `AppError` subclass to a JSON error response using `err.http_status`; catch bare `Exception` with a generic 500 response that never leaks a stack trace.
+  5. Register module routers with their URL prefixes, in build order:
+     - `GET /health` (this module, `main.py`)
+     - `GET /health/db`, `GET /health/redis` (Module 02, `infra_db_cache` router)
+     - `POST /chat` (Module 15, `public_api` router)
+     - `GET /metrics`, `GET /ready` (Module 16, `observability` router)
+  6. Call `register_lifecycle_hooks(app, settings)` — a function that each integration module provides. In v4.1 scope this includes: DB engine teardown (Module 02), Redis teardown (Module 02), and APScheduler start/stop (Module 14). The lifespan hook calls `scheduler.start()` on startup and `scheduler.shutdown()` in the `finally` block. `AsyncIOScheduler` (from `apscheduler.schedulers.asyncio`) is the required scheduler class; `RetryWorker.run` is registered as an interval job (see Module 14 §13). Module 01 does not import `RetryWorker` directly — each module's `register_hooks(app, settings)` function is imported and called in `register_lifecycle_hooks`.
+- On shutdown: no-op beyond the teardown hooks registered in step 6.
 
 ## 20. Validation Rules
 - All required env vars in Module 00 §1 must be present and non-empty at startup, or the app must fail fast with a clear `MissingConfigurationError` listing every missing key (not just the first one found).
@@ -125,17 +136,25 @@ None beyond the empty `GET /health`.
 db: DbSettings (supabase_db_url, default_tenant_id)
 redis: RedisSettings (redis_url)
 qdrant: QdrantSettings (url, api_key)
-ollama: OllamaSettings (host, model)
+ollama: OllamaSettings (host, model, timeout_seconds: int = 30)
 embedding: EmbeddingSettings (model_name)
 resend: ResendSettings (api_key, from_email)
-crm: CrmSettings (base_url, api_key)
-site: SiteSettings (site_api_key)
-flags: FeatureFlagDefaults (enable_rag, enable_quotes, enable_crm, enable_tickets, enable_image_upload, enable_llm_clarification_rewrite)
+crm: CrmSettings (base_url, api_key, max_retry_attempts: int = 5,
+                   retry_worker_interval_seconds: int = 60)
+site: SiteSettings (site_api_key,
+                    cors_allow_origins: list[str] = ["http://localhost:5173"],
+                    session_cookie_name: str = "sales_engineer_session_id",
+                    chat_rate_limit_per_minute: int = 20,
+                    max_message_length: int = 4000)
+flags: FeatureFlagDefaults (enable_rag, enable_quotes, enable_crm, enable_tickets,
+                            enable_image_upload, enable_llm_clarification_rewrite)
+prompts: PromptSettings (library_path: str = "./prompt_library")
+tools: ToolSettings (policy_directory: str = "./security_policies")
 logging: LoggingSettings (log_level)
 ```
 
 ## 26. Environment Variables
-All variables from Module 00 §1.1 are declared here as the canonical `Settings` schema. No new variables introduced by this module.
+All variables from Module 00 §1.1 are declared here as the canonical `Settings` schema. This module introduces no new required variables. The following optional variables with safe defaults are also declared here: `OLLAMA_TIMEOUT_SECONDS` (default `30`), `PROMPT_LIBRARY_PATH` (default `./prompt_library`), `SECURITY_POLICY_DIR` (default `./security_policies`), `CORS_ALLOW_ORIGINS` (default `http://localhost:5173`).
 
 ## 27. Sequence Diagram
 ```
@@ -173,4 +192,7 @@ None — configuration is read once at process start and held in memory via `lru
 - [ ] `/health` returns 200
 - [ ] Global exception handler maps `AppError` subclasses correctly
 - [ ] Secrets never appear in logs or `repr(settings)`
+- [ ] `CORSMiddleware` registered with `cors_allow_origins` from Settings; frontend at `localhost:5173` can reach the API
+- [ ] `register_lifecycle_hooks` called at lifespan startup; APScheduler started and stopped cleanly
+- [ ] All module routers registered in the order listed in §19
 - [ ] Unit + integration tests above pass

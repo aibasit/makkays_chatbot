@@ -58,6 +58,8 @@ tests/
 **`SessionFacts`** (ORM, table `session_facts`):
 `tenant_id: UUID`, `session_id: str`, `budget: Numeric | None`, `company: str | None`,
 `industry: str | None`, `product_interest: str | None`, `project_size: str | None`,
+`quantity: int | None`, `contact_name: str | None`, `contact_email: str | None`,
+`contact_phone: str | None`,
 `updated_at: datetime` — composite PK `(tenant_id, session_id)`.
 
 **`ConversationState`** (ORM, table `conversation_state`):
@@ -65,23 +67,26 @@ tests/
 `intent_confidence: float | None`, `awaiting_clarification: bool = False`,
 `clarification_candidates: list[str] = []`, `clarification_rounds: int = 0`,
 `current_plan: dict | None` (JSONB), `current_plan_step: int | None`,
-`last_question: str | None`, `updated_at: datetime` — composite PK `(tenant_id, session_id)`.
+`last_question: str | None`,
+`spec_question_detected: bool = False`,
+`contact_info_captured: bool = False`,
+`updated_at: datetime` — composite PK `(tenant_id, session_id)`.
 
 ## 10. Pydantic Schemas
-- `FactsSchema` — read model, all fields optional except keys.
-- `FactsUpdate` — partial update (only changed slots sent by the caller).
-- `ConversationStateSchema` — read model.
+- `FactsSchema` — read model; all fields optional except keys. Includes `quantity: int | None`, `contact_name: str | None`, `contact_email: str | None`, `contact_phone: str | None`.
+- `FactsUpdate` — partial update (only changed slots sent by the caller). All fields optional; an all-`None` `FactsUpdate` is a no-op — skip the Redis write and SQL upsert, log at `DEBUG`.
+- `ConversationStateSchema` — read model. Includes `spec_question_detected: bool = False` and `contact_info_captured: bool = False`.
 - `ConversationStateUpdate` — partial update, primarily used internally by Router (M06)/Planner (M07)/Tool Executor (M10).
 
 ## 11. Repository Layer
 `FactsRepository`:
 - `async get(tenant_id, session_id) -> SessionFacts | None`
-- `async upsert(tenant_id, session_id, patch: FactsUpdate) -> SessionFacts`
+- `async upsert(tenant_id, session_id, patch: FactsUpdate) -> SessionFacts` — implemented as a single PostgreSQL `INSERT INTO session_facts (...) ON CONFLICT (tenant_id, session_id) DO UPDATE SET ...` statement, never as a read-then-write.
 
 `ConversationStateRepository`:
 - `async get(tenant_id, session_id) -> ConversationState | None`
-- `async upsert(tenant_id, session_id, patch: ConversationStateUpdate) -> ConversationState`
-- `async increment_clarification_round(tenant_id, session_id) -> int`
+- `async upsert(tenant_id, session_id, patch: ConversationStateUpdate) -> ConversationState` — same single-statement upsert as above.
+- `async increment_clarification_round(tenant_id, session_id) -> int` — **must** be implemented as a single atomic SQL statement: `UPDATE conversation_state SET clarification_rounds = clarification_rounds + 1 WHERE tenant_id = :tid AND session_id = :sid RETURNING clarification_rounds`. This is not a Python read-modify-write; the increment and the returned value are produced in a single round-trip, preventing a race condition where two concurrent requests could both read the same count before either writes.
 
 ## 12. Service Layer
 `SessionStateService`:
@@ -104,6 +109,10 @@ CREATE TABLE session_facts (
   industry TEXT,
   product_interest TEXT,
   project_size TEXT,
+  quantity INTEGER,
+  contact_name TEXT,
+  contact_email TEXT,
+  contact_phone TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, session_id)
 );
@@ -119,6 +128,8 @@ CREATE TABLE conversation_state (
   current_plan JSONB,
   current_plan_step INTEGER,
   last_question TEXT,
+  spec_question_detected BOOLEAN NOT NULL DEFAULT false,
+  contact_info_captured BOOLEAN NOT NULL DEFAULT false,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, session_id)
 );
@@ -127,8 +138,8 @@ CREATE TABLE conversation_state (
 ## 15. Redis Keys
 | Key Pattern | TTL | Contents |
 |---|---|---|
-| `facts:{tenant_id}:{session_id}` | None (durable, no expiry — checkpointed to SQL on every write) | JSON-serialized `FactsSchema` |
-| `conv:{tenant_id}:{session_id}` | 30 min (reset on every write, matching v3 inactivity TTL) | JSON-serialized `ConversationStateSchema` |
+| `facts:{tenant_id}:{session_id}` | None (durable, no expiry — checkpointed to SQL on every write) | JSON-serialized `FactsSchema` via `schema.model_dump_json()` (Pydantic v2). Deserialized with `FactsSchema.model_validate_json(raw)`. UUID and Decimal fields round-trip correctly with this method. |
+| `conv:{tenant_id}:{session_id}` | 30 min (reset on every write, matching v3 inactivity TTL) | JSON-serialized `ConversationStateSchema` via `schema.model_dump_json()` / `ConversationStateSchema.model_validate_json(raw)`. |
 
 ## 16. API Endpoints
 This module is consumed internally by the Orchestrator; no public HTTP endpoints of its own in v4.1 scope (no admin UI for direct Facts editing).
@@ -174,7 +185,7 @@ N/A.
 - `test_clarification_round_increment_persists`
 
 ## 25. Configuration
-No new settings beyond `Settings.redis` / `Settings.db` from Module 01. `CONVERSATION_STATE_TTL_SECONDS = 1800` defined as a module-level constant (not env-configurable in v4.1 scope, matches v3 behavior per architecture).
+No new settings beyond `Settings.redis` / `Settings.db` from Module 01. `CONVERSATION_STATE_TTL_SECONDS: int = 1800` is defined as a module-level constant at the top of `session/service.py`. This is the single and only definition; it is not duplicated in `config.py`. All other modules that reference the TTL value must import this constant from `app.session.service`.
 
 ## 26. Environment Variables
 None new.

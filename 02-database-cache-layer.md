@@ -42,11 +42,12 @@ tests/
 - `app/db/base.py`
 - `app/cache/redis_client.py`
 - `alembic.ini` + `app/db/migrations/env.py`
+- `app/db/migrations/seed_local_dev.py` — a one-time seed script (not an Alembic migration) that inserts the `DEFAULT_TENANT_ID` into any table needing it. Run once after `alembic upgrade head` in local dev.
 
 ## 7. Responsibility of Every File
 | File | Responsibility |
 |---|---|
-| `engine.py` | Creates the async SQLAlchemy engine + `async_sessionmaker`; exposes `get_db_session()` async generator for FastAPI `Depends` |
+| `engine.py` | Creates the async SQLAlchemy engine + `async_sessionmaker`; exposes `get_db_session()` async generator for FastAPI `Depends`. Uses SQLAlchemy 2.x (`sqlalchemy>=2.0`): `from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession` |
 | `base.py` | Declarative `Base` class all ORM models inherit from; shared `TimestampMixin` (`created_at`, `updated_at`) and `TenantMixin` (`tenant_id`) |
 | `redis_client.py` | Creates a single `redis.asyncio.Redis` client from `REDIS_URL`; exposes `get_redis()` dependency |
 | `alembic.ini` / `env.py` | Migration runner config pointed at `SUPABASE_DB_URL` (direct, non-pooled connection for DDL) |
@@ -81,6 +82,7 @@ None directly — this module only provides the client. Namespacing convention d
 {namespace}:{tenant_id}:{entity_id}
 e.g. facts:00000000-...:sess_abc123
 ```
+UUID values in Redis keys MUST use `str(uuid)` (lowercase hyphenated format, e.g. `00000000-0000-0000-0000-000000000001`), never `.hex` or `.bytes`. This is the canonical key format for all modules.
 
 ## 16. API Endpoints
 | Method | Path | Purpose |
@@ -99,6 +101,13 @@ None.
 - Engine created once at import time using `create_async_engine(settings.db.supabase_db_url, pool_size=5, max_overflow=5, pool_pre_ping=True)`.
 - `pool_pre_ping=True` is required because Supabase pooled connections can be recycled server-side; this avoids stale-connection errors on the first query after idle time.
 - Redis client created with `decode_responses=True` so all later modules work with `str`, not `bytes`.
+- Connection teardown on shutdown (lifespan `finally` hook called in Module 01's lifespan):
+  ```python
+  async def register_hooks(app: FastAPI, settings: Settings) -> None:
+      # lifecycle hooks registered into lifespan
+      pass
+  ```
+  Startup: no-op. Teardown: lifespan `finally` calls `await async_engine.dispose()` and `await redis_client.aclose()`. Without this, local dev test runs will leak open connections.
 
 ## 20. Validation Rules
 - `SUPABASE_DB_URL` must use the `postgresql+asyncpg://` scheme (validated in Module 01's `Settings`, enforced again here at engine construction).
@@ -126,6 +135,7 @@ None.
 - `test_db_session_rolls_back_on_exception`.
 - `test_redis_set_get_roundtrip`.
 - `test_health_db_and_redis_endpoints`.
+- `test_insert_without_tenant_id_raises_integrity_error` — verifies `TenantMixin` is enforced and that an INSERT without `tenant_id` raises a database `NOT NULL` constraint error.
 
 ## 25. Configuration
 Reuses `Settings.db` and `Settings.redis` from Module 01. No new settings fields.
@@ -166,5 +176,7 @@ Connection pool (engine) ↔ per-request `AsyncSession` ↔ repository layer (Mo
 - [ ] Redis client connects and round-trips a test key
 - [ ] `TimestampMixin` / `TenantMixin` available for import
 - [ ] Alembic configured against direct (non-pooled) connection string
+- [ ] Connection teardown `dispose()` and `aclose()` called in lifespan shutdown
+- [ ] Seeding script `seed_local_dev.py` implemented and tested
 - [ ] `/health/db`, `/health/redis` implemented
 - [ ] Tests above pass

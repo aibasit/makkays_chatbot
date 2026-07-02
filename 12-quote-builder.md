@@ -15,7 +15,7 @@ v3/v4 (unchanged per architecture §2.9), now triggered as an explicit plan step
 gated by the Security Policy like any other tool.
 
 ## 4. Dependencies
-Module 03 (Facts — quote slots), Module 09 (`ENABLE_QUOTES` flag), Module 10 (registered tool + policy), Module 11 (product data for pricing lookup).
+Module 03 (Facts — quote slots including `quantity`, `company`, `product_interest`, `budget`), Module 05 (LLM — `QuoteExplainer.explain` calls `OllamaClient.chat`), Module 08 (Prompt Manager — `tools/quote_explanation_v1.md`), Module 09 (`ENABLE_QUOTES` flag), Module 10 (registered tool + policy), Module 11 (product data for pricing lookup — `product_pricing` has FK on `products.id`; **M11 migrations and seed data must be applied before M12's `product_pricing` migration and seed**).
 
 ## 5. Folder Structure
 ```
@@ -40,10 +40,11 @@ tests/
 ## 7. Responsibility of Every File
 | File | Responsibility |
 |---|---|
-| `models.py` | ORM model for `quotes` |
-| `schemas.py` | `QuoteSlots`, `QuoteResult`, `QuoteLineItem` |
-| `repository.py` | `QuoteRepository.create(...)`, `get(...)` |
-| `builder.py` | `QuoteBuilder.build(facts, product_ids, tenant_id) -> QuoteResult` — the deterministic pricing calculation |
+| `models.py` | ORM model for `quotes`, `ProductPricing` |
+| `schemas.py` | `QuoteSlots`, `QuoteResult`, `QuoteLineItem`, **`quote_slots_complete(facts: FactsSchema) -> bool`** — the single canonical definition used by Planner (M07), Security Policy (M10), and Builder (this file); no other module may define or duplicate this logic |
+| `repository.py` | `QuoteRepository.create(...)`, `get(...)`, `ProductPricingRepository.get_prices(...)` |
+| `builder.py` | `QuoteBuilder.build(session, context) -> QuoteResult` — the deterministic pricing calculation; `QuoteExplainer.explain(quote_result) -> str` — the LLM narration call |
+| `exceptions.py` | `IncompleteQuoteSlotsError`, `PricingDataMissingError` |
 
 ## 8. Classes
 - `Quote` (ORM).
@@ -62,9 +63,16 @@ from `products` rather than a column on it, so pricing can be updated independen
 of catalog/spec data without touching RAG ingestion.)*
 
 ## 10. Pydantic Schemas
-- `QuoteSlots { company: str, product_ids: list[UUID], quantity: int, budget: numeric }` — the validated, complete version of the four required Facts slots named in architecture §2.4/§2.14.
-- `QuoteLineItem { product_id: UUID, name: str, unit_price: numeric, quantity: int, subtotal: numeric }`.
-- `QuoteResult { quote_id: UUID, company: str, line_items: list[QuoteLineItem], total: numeric, currency: str }`.
+- `QuoteSlots { company: str, product_ids: list[UUID], quantity: int, budget: Decimal }` — the validated, complete version of the four required Facts slots named in architecture §2.4/§2.14.
+- `QuoteLineItem { product_id: UUID, name: str, unit_price: Decimal, quantity: int, subtotal: Decimal }`.
+- `QuoteResult { quote_id: UUID, company: str, line_items: list[QuoteLineItem], total: Decimal, currency: str }`.
+
+**`quote_slots_complete(facts: FactsSchema) -> bool`** — defined in `app/quotes/schemas.py`. This is the **single canonical implementation**. Returns `True` if and only if `facts.company is not None and facts.product_interest is not None and facts.quantity is not None and facts.budget is not None`. Imported by:
+- Module 07 (`app/quotes/schemas.py` → `quote_slots_complete`)
+- Module 10 `policy.py` predicate registry (`'quote_slots_complete': quote_slots_complete`)
+- `builder.py` in this module (defensive re-validation)
+
+No other module may define a `quote_slots_complete` function. The import path is always `from app.quotes.schemas import quote_slots_complete`.
 
 ## 11. Repository Layer
 `QuoteRepository`:
@@ -74,19 +82,47 @@ of catalog/spec data without touching RAG ingestion.)*
 `ProductPricingRepository.get_prices(tenant_id, product_ids) -> dict[UUID, Decimal]`.
 
 ## 12. Service Layer
-`QuoteBuilder.build(tenant_id, session_id, facts: FactsSchema, product_ids: list[UUID]) -> QuoteResult`:
-1. Validate `QuoteSlots` completeness (company, product_ids non-empty, quantity, budget) — raise `IncompleteQuoteSlotsError` if not (this should already have been gated by the Security Policy in Module 10, but the builder re-validates defensively rather than trusting the caller blindly).
-2. `prices = ProductPricingRepository.get_prices(tenant_id, product_ids)`.
-3. Compute `line_items` deterministically: `subtotal = unit_price * quantity` per product (v4.1 scope: quantity applies uniformly if a single aggregate quantity slot is used, per the Facts schema note in Module 07 §19 — a future extension allows per-product quantities).
-4. `total = sum(subtotals)`.
-5. Persist via `QuoteRepository.create`.
-6. Return `QuoteResult`.
+`QuoteBuilder.build(session: SessionContext, context: ExecutionContext) -> QuoteResult`:
+1. Read `product_ids = context.get_product_ids()` from `ExecutionContext` (populated by prior `retrieve_products` step in the plan). If `None`, raise `IncompleteQuoteSlotsError('product_ids unavailable in ExecutionContext')`.
+2. Validate `quote_slots_complete(session.facts)` — raise `IncompleteQuoteSlotsError` if not (belt-and-suspenders; this should already have been gated by the Security Policy in Module 10).
+3. `prices = await ProductPricingRepository.get_prices(session.tenant_id, product_ids)` — returns `dict[UUID, Decimal]`. If any `product_id` has no price row, raise `PricingDataMissingError` with the list of missing IDs.
+4. Compute `line_items` deterministically: `subtotal = unit_price * quantity` per product. `quantity` is a single integer from `session.facts.quantity` applied uniformly to all products (v4.1 documented limitation: one aggregate quantity, not per-product quantities).
+5. `total = sum(item.subtotal for item in line_items)`.
+6. Persist via `QuoteRepository.create(session.tenant_id, session.session_id, result)` — returns `Quote` ORM with a generated `quote_id`.
+7. Call `MetricsRegistry.increment_quote_result(success=True)`. On any exception from steps 2–6, call `MetricsRegistry.increment_quote_result(success=False)` in the exception handler before re-raising.
+8. Fire-and-forget: `asyncio.create_task(NotificationService.notify_quote_generated(quote_result))` from Module 14 — failure is swallowed and logged at `WARNING`, never re-raised.
+9. Return `QuoteResult`.
 
-`QuoteExplainer.explain(quote_result: QuoteResult) -> str` — single LLM call (via Module 05) using the `tools/quote_explanation_v1.md` prompt (Module 08), given the already-final numbers as context; the prompt explicitly instructs the model to restate the given numbers, not recompute them.
+`QuoteExplainer.explain(quote_result: QuoteResult) -> str`:
+```python
+system_msg = ChatMessage(
+    role="system",
+    content=prompt_manager.get("tools", "quote_explanation", "1")
+)
+user_msg = ChatMessage(
+    role="user",
+    content=f"Here is the computed quote:\n{quote_result.model_dump_json()}"
+)
+response = await ollama_client.chat(
+    messages=[system_msg, user_msg],
+    temperature=0.3
+)
+return response.content
+```
+The system prompt instructs the LLM to restate the given numbers in natural language, never to recompute them. `response.content` is returned directly as the `result_summary` for the `generate_quote` `ToolExecutionResult`.
+
+**Tool registration** (in `quotes/__init__.py`):
+```python
+ToolRegistry.register('generate_quote', QuoteBuilder.build)
+```
+
+**Interaction with `respond` step**: when `respond` follows `generate_quote` in the plan, the `respond` built-in tool checks `context.results.get('generate_quote')` and returns its `result_summary` directly as the `assistant_message`, without making an additional LLM call.
 
 ## 13. Internal Interfaces
-- Registered as Tool Executor (Module 10) step `generate_quote`, policy per architecture §2.14 example exactly (`allowed_intents: [sales_inquiry, quote_request]`, `required_state: [quote_slots_complete]`, `required_slots: [company, products, quantity, budget]`, `rate_limit: "5/min per session"`, `audit_log: true`).
-- `quote_slots_complete` is a named predicate (referenced in the YAML, implemented in Module 10's `policy.py` predicate registry) that calls into this module's `QuoteSlots` validation logic — kept as a shared function so the Planner (Module 07), Policy (Module 10), and Builder (this module) never disagree about what "complete" means.
+- Registered as Tool Executor (Module 10) step `generate_quote`, policy: `allowed_intents: [sales_inquiry, quote_request]`, `required_state: [quote_slots_complete]`, `required_slots: [company, product_interest, quantity, budget]`, `rate_limit: "5/min"`, `audit_log: true`.
+- `quote_slots_complete` is the single canonical predicate defined in **this module's `schemas.py`** and imported by Module 07 and Module 10. No other module defines this predicate.
+- Tool function signature (required by Module 10's `ToolRegistry`): `async def generate_quote_tool(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult` — implemented in `builder.py`, wraps `QuoteBuilder.build` and `QuoteExplainer.explain`, returns `ToolExecutionResult(step='generate_quote', success=True, result_summary=explanation_text, product_ids=None)`.
+- **Pricing seed**: run `python scripts/seed_pricing.py --source pricing.json --tenant-id $DEFAULT_TENANT_ID` after M11's ingestion script. Input format: `[{"product_id": "<uuid>", "unit_price": 999.00, "currency": "USD"}]`. Must run after M11 products are ingested so FK constraints are satisfied.
 
 ## 14. Database Tables
 ```sql

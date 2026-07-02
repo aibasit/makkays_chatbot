@@ -60,8 +60,8 @@ tests/
 ## 8. Classes
 - `SecurityPolicy` — one instance per tool, fields matching architecture §2.14 YAML shape.
 - `PolicyRegistry` — loads all YAML files at startup into `dict[str, SecurityPolicy]`.
-- `ToolRegistry` — `dict[str, ToolImplementation]`, filtered by `FeatureFlags` before being exposed to the LLM's tool schema.
-- `ToolExecutor` — `async execute_plan(plan: Plan, session) -> list[ToolExecutionResult]`.
+- `ToolRegistry` — maps step names to registered async callable implementations. Filtered by `FeatureFlags` before being exposed to the LLM's tool schema. Tool implementations **register themselves** via `ToolRegistry.register(name, fn)` in their own module's `__init__.py`; this module never imports from Modules 11, 12, or 14 directly.
+- `ToolExecutor` — `async execute_plan(plan: Plan, session: SessionContext, flags: FeatureFlags) -> list[ToolExecutionResult]`.
 
 ## 9. Data Models
 No new database tables for policies themselves (YAML files, loaded at startup — matches architecture's "loaded at startup and enforced by the Tool Executor"). An **audit log** table is required for policies with `audit_log: true`:
@@ -81,27 +81,41 @@ CREATE TABLE tool_audit_log (
 ## 10. Pydantic Schemas
 - `SecurityPolicySchema { tool_name: str, allowed_intents: list[str], required_state: list[str], required_slots: list[str], rate_limit: str | None, audit_log: bool }`.
 - `PolicyCheckResult { allowed: bool, reason: str | None, clause_failed: Literal["intent","state","slots","rate_limit"] | None }`.
-- `ToolExecutionResult { step: str, success: bool, result_summary: str, error: str | None }`.
+- `ToolExecutionResult { step: str, success: bool, result_summary: str, error: str | None, product_ids: list[UUID] | None = None }` — `product_ids` carries the product UUID list from `retrieve_products` forward so `retrieve_docs` and `generate_quote` can consume it via `ExecutionContext`.
+- `ExecutionContext` — maintained by `execute_plan` for the lifetime of one plan execution:
+  ```python
+  class ExecutionContext(BaseModel):
+      results: dict[str, ToolExecutionResult] = {}
+
+      def get_product_ids(self) -> list[UUID] | None:
+          r = self.results.get("retrieve_products")
+          return r.product_ids if r and r.success else None
+  ```
+  `ExecutionContext` is initialized empty at the start of each `execute_plan` call. After each step succeeds, the step's `ToolExecutionResult` is stored at `context.results[step_name]`. The context is passed as the second argument to every tool implementation function.
 
 ## 11. Repository Layer
 `ToolAuditLogRepository.create(entry) -> None` — append-only, mirrors `TurnsRepository`'s pattern (Module 04).
 
 ## 12. Service Layer
-`ToolExecutor.execute_plan(plan, session)`:
-1. For each `step` in `plan.steps`, in order:
+`ToolExecutor.execute_plan(plan: Plan, session: SessionContext, flags: FeatureFlags) -> list[ToolExecutionResult]`:
+1. Initialise `context = ExecutionContext()` — empty at plan start.
+2. For each `step` in `plan.steps`, in order:
    a. Confirm `step` is a registered tool in `ToolRegistry` (feature-flag-filtered) — if not, this is a config bug, log `ERROR`, skip.
    b. `policy = PolicyRegistry.get(step)`.
    c. `result = policy.check(intent=plan.intent, state=session.conversation_state, facts=session.facts)`.
-   d. If not allowed: raise/record `PolicyViolationError` with `clause_failed`; if `policy.audit_log`, write to `tool_audit_log`; **do not execute** the tool; continue to next step or abort per step criticality (see §19).
-   e. If allowed: execute the tool implementation, capture `ToolExecutionResult`; if `audit_log`, write an "allowed" audit entry too.
-2. Return the list of `ToolExecutionResult` for the Orchestrator to fold into `conversation_turns.tool_calls`.
+   d. If not allowed: raise/record `PolicyViolationError` with `clause_failed`; if `policy.audit_log`, write to `tool_audit_log`; **do not execute** the tool; if step is in `CRITICAL_STEPS`, abort remaining steps; else continue.
+   e. If allowed: `tool_result = await tool_fn(session, context)` — the tool implementation receives both `session` and `context`; store `context.results[step] = tool_result`; if `audit_log`, write an "allowed" audit entry.
+3. Return the list of `ToolExecutionResult` for the Orchestrator.
 
-**Plan-conformance check** (separate from Security Policy, per architecture §2.4/§3): if the LLM, during its response generation, emits a tool call for a step **not present in the current plan**, that call is rejected and logged as a `PlanViolationError` — distinct from a policy failure, flagging a Planner/prompt mismatch worth investigating (architecture §3).
+**Plan-conformance check**: if the LLM emits a tool call for a step **not present in the current plan**, that call is rejected and logged as a `PlanViolationError` — distinct from a policy failure.
+
+**Tool registration pattern**: tool implementations register themselves by calling `ToolRegistry.register(name, fn)` in their own module's `__init__.py`. Module 01's `create_app()` imports each tool module's `__init__.py` as part of the startup sequence. This module never imports from Modules 11, 12, or 14 directly.
 
 ## 13. Internal Interfaces
-- `execute_plan(plan, session) -> list[ToolExecutionResult]` — called by the Orchestrator (Module 06) immediately after `TaskPlanner.build_plan`.
-- `ToolRegistry.get_llm_tool_schema(flags) -> list[dict]` — called before every `OllamaClient.chat` invocation that might involve tool calling, so disabled tools are never even offered to the model.
-- Each concrete tool (Modules 11/12/14) registers itself via a `@register_tool("retrieve_products")` decorator or equivalent explicit registration call in `registry.py` — this module does not implement RAG/Quote/CRM logic itself, only the dispatch/enforcement layer around them.
+- `execute_plan(plan, session, flags) -> list[ToolExecutionResult]` — called by the Orchestrator (Module 06) immediately after `TaskPlanner.build_plan`.
+- `ToolRegistry.register(name: str, fn: Callable) -> None` — called by each tool module's `__init__.py` at import time. The registered callable's required signature: `async def tool_fn(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult` where `SessionContext = namedtuple('SessionContext', ['tenant_id', 'session_id', 'facts', 'conversation_state'])`.
+- `ToolRegistry.get_llm_tool_schema(flags: FeatureFlags) -> list[dict]` — called before every `OllamaClient.chat` invocation; disabled tools are never offered to the model.
+- **Built-in tools** (implemented in `executor.py`, not in external modules): `respond` (calls `OllamaClient.chat` with full context using `prompts/system/base_v1.md`), `compare` (formats a comparison table from `context.get_product_ids()` results), `request_missing_slots` (uses `TemplateLookup` from Module 13 to generate a slot-request message). These three tools are registered by `executor.py` itself at module load time.
 
 ## 14. Database Tables
 `tool_audit_log` (above). Reads (does not own) `conversation_state`, `session_facts` (Module 03).
@@ -121,13 +135,33 @@ N/A.
 `ToolExecutionResult` list, folded into `OrchestratorResult.tool_calls` (Module 06) and `conversation_turns.tool_calls` (Module 04).
 
 ## 19. Business Logic
-- **Step criticality**: `respond` and steps that are purely informational (`retrieve_products`, `retrieve_docs`, `compare`) failing policy is logged but does not abort the whole plan — the Orchestrator degrades gracefully (fewer facts to answer with). A **mutating** step (`generate_quote`, `create_lead`, `create_ticket`) failing policy **does** abort further execution of that step's downstream dependents in the plan (e.g., no point running a hypothetical "send quote email" step if `generate_quote` itself was denied) — this criticality classification is a small static lookup table in `executor.py`, not a policy field.
-- **Rate limiting**: implemented as a Redis `INCR` + `EXPIRE` counter per `(tenant_id, session_id, tool_name)`; parsed from the `"N/unit"` string format in the YAML (e.g., `"5/min"` → window 60s, limit 5).
-- **Policy vs Plan are independently checked** — a step can be in-plan but policy-denied, or (should never happen given Module 07's correctness, but is still checked) policy-allowed yet not in-plan; both are rejected, logged with distinct error types, per architecture §3.
+- **Step criticality**: `CRITICAL_STEPS = frozenset({'generate_quote', 'create_lead', 'create_ticket'})` — defined as a module-level constant in `executor.py`. If a critical step fails policy or throws, all subsequent steps in the plan are aborted. Non-critical steps (`retrieve_products`, `retrieve_docs`, `compare`, `respond`, `request_missing_slots`) failing policy are logged but the plan continues.
+- **Rate limiting**: implemented as a **fixed-window** Redis counter per `(tenant_id, session_id, tool_name)`. Pattern: `INCR ratelimit:{tenant_id}:{session_id}:{tool_name}` — if the INCR return value is 1 (key did not exist), immediately call `EXPIRE ratelimit:... {window_seconds}` in the same pipeline. If the INCR return value exceeds the limit, raise `RateLimitExceededError`. Rate strings parsed from YAML `"N/unit"` format: `"5/min"` → window=60s, limit=5; `"3/min"` → window=60s, limit=3.
+- **Policy vs Plan are independently checked** — per architecture §3.
+- **YAML policy file format** (all six fields required; startup self-check verifies every registered tool has a corresponding file):
+  ```yaml
+  tool_name: generate_quote
+  allowed_intents:
+    - sales_inquiry
+    - quote_request
+  required_state:
+    - quote_slots_complete
+  required_slots:
+    - company
+    - product_interest
+    - quantity
+    - budget
+  rate_limit: "5/min"
+  audit_log: true
+  ```
 
 ## 20. Validation Rules
-- Every YAML policy file must specify all five fields (`allowed_intents`, `required_state`, `required_slots`, `rate_limit`, `audit_log`) — a startup self-check (mirroring Module 08's prompt self-check) verifies every registered tool has a corresponding policy file, and vice versa; a tool with no policy file fails startup rather than defaulting to "allow everything."
-- `required_state` values must correspond to real, checkable predicates over `ConversationStateSchema`/computed facts (e.g., `quote_slots_complete`) — implemented as a small named-predicate registry in `policy.py`, not arbitrary string eval.
+- Every YAML policy file must specify all five fields (`allowed_intents`, `required_state`, `required_slots`, `rate_limit`, `audit_log`) — a startup self-check verifies every registered tool has a corresponding policy file; a tool with no policy file fails startup.
+- `required_state` values correspond to named predicates in `PREDICATE_REGISTRY` defined in `policy.py`:
+  - `quote_slots_complete(facts, state) -> bool`: imported from `app.quotes.schemas` — checks `facts.company`, `facts.product_interest`, `facts.quantity`, and `facts.budget` are all non-None.
+  - `contact_info_complete(facts, state) -> bool`: checks that at least one of `facts.contact_email` or `facts.contact_phone` is non-None.
+  - `PREDICATE_REGISTRY: dict[str, Callable[[FactsSchema, ConversationStateSchema], bool]]` is defined in `policy.py`. Unknown predicate names in a YAML `required_state` list cause a startup failure.
+- `required_slots` values are `FactsSchema` field names; validated by checking `getattr(facts, slot) is not None`.
 
 ## 21. Error Handling
 | Error | Handling |

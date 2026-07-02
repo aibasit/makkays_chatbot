@@ -57,18 +57,18 @@ tests/
 | `schemas.py` | `ProductResult`, `DocResult`, `ExtractedFilters` |
 
 ## 8. Classes
-- `BgeM3Embedder` — loads `BAAI/bge-m3` once at startup, `embed(texts) -> list[vector]`.
-- `FilterExtractor` — `extract(query: str, tenant_id) -> ExtractedFilters` (brand, category, numeric spec matches like port count).
-- `QdrantWrapper` — `search(collection, vector, filter, limit) -> list[ScoredPoint]`, `upsert(collection, points)`.
+- `BgeM3Embedder` — loads `BAAI/bge-m3` once at module import time using `FlagEmbedding.FlagModel('BAAI/bge-m3', use_fp16=True)` (from the `FlagEmbedding` PyPI package, the reference implementation for BGE-M3). Set `TOKENIZERS_PARALLELISM=false` in the process environment before importing to suppress HuggingFace tokenizer warnings in async contexts. If `ENABLE_RAG=false`, the embedder is never instantiated. Exposes `embed(texts: list[str]) -> list[list[float]]` — each vector is 1024 dimensions (BGE-M3 dense output). This method is synchronous (CPU/GPU compute); callers must run it with `asyncio.get_event_loop().run_in_executor(None, embedder.embed, texts)` to avoid blocking the event loop.
+- `FilterExtractor` — `extract(query: str, tenant_id: UUID) -> ExtractedFilters`. Vocabulary (distinct `brand` and `category` values per tenant) is loaded lazily on first call via `ProductRepository.get_distinct_values(tenant_id)` and stored in `self._brands: frozenset[str]`, `self._categories: frozenset[str]`. The vocabulary is refreshed only on process restart — newly ingested brands require a restart to appear in filter extraction.
+- `QdrantWrapper` — wraps `qdrant_client.QdrantClient` (sync client, called via executor to not block event loop). Exposes: `search(collection, vector, filter, limit) -> list[ScoredPoint]`, `upsert(collection, points: list[PointStruct])`, `ensure_collection(name, vector_size=1024, distance='Cosine')`.
 - `RetrievalService` — the two plan-step entrypoints, composing extraction → SQL narrowing → Qdrant search.
-- `IngestionService` — `ingest_products()`, `ingest_documents()`.
+- `IngestionService` — `ingest_products(source_path: str, tenant_id: UUID)`, `ingest_documents(source_path: str, tenant_id: UUID)`.
 
 ## 9. Data Models
-`Product` (ORM, table `products`): `id: UUID`, `tenant_id: UUID`, `name`, `brand`, `category`, `description`, `created_at`.
-`ProductSpec` (ORM, table `product_specs`): `id: UUID`, `product_id: UUID (fk)`, `tenant_id: UUID`, `spec_key: str` (e.g. `"port_count"`), `spec_value: str`.
-`Document` (ORM, table `documents`): `id: UUID`, `tenant_id: UUID`, `product_id: UUID (fk, nullable)`, `title`, `source_path`, `created_at`.
+`Product` (ORM, table `products`): `id: UUID`, `tenant_id: UUID`, `name: str`, `brand: str | None`, `category: str | None`, `description: str | None`, `created_at: datetime`.
+`ProductSpec` (ORM, table `product_specs`): `id: UUID`, `product_id: UUID (fk → products.id)`, `tenant_id: UUID`, `spec_key: str` (e.g. `"port_count"`), `spec_value: str`.
+`Document` (ORM, table `documents`): `id: UUID`, `tenant_id: UUID`, `product_id: UUID | None (fk → products.id, nullable)`, `title: str`, `source_path: str`, `created_at: datetime`.
 
-Qdrant collections (not SQL): `products_v1` (payload: `tenant_id, product_id, brand, category`), `documents_v1` (payload: `tenant_id, document_id, product_id`).
+Qdrant collections (not SQL): `products_v1` — dense vectors of **dimension 1024**, distance **COSINE**, payload per point: `{tenant_id: str, product_id: str, brand: str, category: str}`. `documents_v1` — same dimension and distance, payload per point: `{tenant_id: str, document_id: str, product_id: str | None}`. Collection creation is handled by `QdrantWrapper.ensure_collection(name, vector_size=1024, distance='Cosine')`, called by `IngestionService` before any upsert and as a startup check when `ENABLE_RAG=true`.
 
 ## 10. Pydantic Schemas
 - `ExtractedFilters { brand: str | None, category: str | None, spec_filters: dict[str, str] }`.
@@ -80,18 +80,35 @@ Qdrant collections (not SQL): `products_v1` (payload: `tenant_id, product_id, br
 - `DocumentRepository.find_by_product_ids(tenant_id, product_ids) -> list[UUID]`.
 
 ## 12. Service Layer
-`RetrievalService.retrieve_products(query, tenant_id)`:
-1. `filters = FilterExtractor.extract(query, tenant_id)`.
-2. `candidate_ids = ProductRepository.find_by_filters(tenant_id, filters)` — if extraction found nothing, `candidate_ids` is `None` (no SQL narrowing, full-tenant Qdrant search as fallback).
-3. `vector = BgeM3Embedder.embed([query])[0]`.
-4. `results = QdrantWrapper.search("products_v1", vector, filter={"tenant_id": tenant_id, "product_id": {"in": candidate_ids}} if candidate_ids else {"tenant_id": tenant_id}, limit=5)`.
-5. Map to `ProductResult` list, return.
+`RetrievalService.retrieve_products(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult`:
+1. Read `query = session.facts.product_interest or session.conversation_state.last_question`.
+2. `filters = FilterExtractor.extract(query, session.tenant_id)`.
+3. `candidate_ids = await ProductRepository.find_by_filters(session.tenant_id, filters)` — returns `None` if no filters extracted (signals unscoped fallback).
+4. `vector = await run_in_executor(embedder.embed, [query])` — non-blocking.
+5. `results = await run_in_executor(qdrant.search, "products_v1", vector[0], qdrant_filter, limit)` where `qdrant_filter = {"must": [{"key": "tenant_id", "match": {"value": str(session.tenant_id)}}, {"key": "product_id", "match": {"any": [str(i) for i in candidate_ids]}}]}` if `candidate_ids` else `{"must": [{"key": "tenant_id", "match": {"value": str(session.tenant_id)}}]}`.
+6. Map `ScoredPoint` list to `ProductResult` list.
+7. Call `MetricsRegistry.increment_rag_hit(hit=len(results) > 0)`.
+8. Return `ToolExecutionResult(step='retrieve_products', success=True, result_summary=json.dumps([r.model_dump() for r in results]), product_ids=[r.product_id for r in results])`.
 
-`RetrievalService.retrieve_docs(query, product_ids, tenant_id)` — same pattern, scoped Qdrant search restricted to `documents_v1` payloads matching `product_id in product_ids` (from the already-narrowed product set found by `retrieve_products` earlier in the same plan — this is the "layered" part: doc retrieval reuses product retrieval's narrowing rather than re-deriving filters from scratch).
+`RetrievalService.retrieve_docs(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult`:
+1. `product_ids = context.get_product_ids()` — reads from `ExecutionContext` (populated by prior `retrieve_products` step).
+2. If `product_ids is None`: do not perform unscoped search — perform a Qdrant search scoped to `tenant_id` only (no `product_id` filter), log `DEBUG 'retrieve_docs running unscoped: no product_ids in ExecutionContext'`.
+3. `query = session.facts.product_interest or session.conversation_state.last_question`.
+4. `vector = await run_in_executor(embedder.embed, [query])`.
+5. `results = await run_in_executor(qdrant.search, "documents_v1", vector[0], qdrant_filter, limit)` with `product_id` filter added if `product_ids` is not None.
+6. Return `ToolExecutionResult(step='retrieve_docs', success=True, result_summary=json.dumps([r.model_dump() for r in results]), product_ids=None)`.
+
+**Tool registration** (in `rag/__init__.py`, called at import time):
+```python
+ToolRegistry.register('retrieve_products', RetrievalService.retrieve_products)
+ToolRegistry.register('retrieve_docs', RetrievalService.retrieve_docs)
+```
 
 ## 13. Internal Interfaces
-- Registered as two Tool Executor (Module 10) tools: `retrieve_products`, `retrieve_docs`, each with a Security Policy YAML (`allowed_intents: [sales_inquiry, quote_request]`, no required slots, `audit_log: false` — read-only, non-sensitive).
-- `RetrievalService` methods are the only public entrypoints; `FilterExtractor`/`QdrantWrapper`/`BgeM3Embedder` are internal collaborators.
+- Registered as two Tool Executor (Module 10) tools: `retrieve_products`, `retrieve_docs`, each with a Security Policy YAML (`allowed_intents: [sales_inquiry, quote_request, technical_support]`, `required_state: []`, `required_slots: []`, `rate_limit: null`, `audit_log: false` — read-only, non-sensitive).
+- Both tool functions have the standard signature: `async def fn(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult`.
+- `RetrievalService` methods are the only public entrypoints; `FilterExtractor`/`QdrantWrapper`/`BgeM3Embedder` are internal collaborators, never called directly by the Tool Executor or any other module.
+- **Dependency note**: Module 12 (`product_pricing`) has a FK on `products.id`. M11's tables must be migrated and seeded before M12's pricing migration runs. Document in M12 §4.
 
 ## 14. Database Tables
 ```sql
@@ -137,9 +154,11 @@ N/A (internal tool invocation, not HTTP).
 `ProductResult`, `DocResult` lists, folded into the LLM's context for the `respond`/`compare` steps and into `ToolExecutionResult.result_summary` for `conversation_turns.tool_calls`.
 
 ## 19. Business Logic
-- **Filter extraction is keyword/lookup, not an LLM call** — matches known `brand`/`category` values (loaded once from `products` at startup into an in-memory lookup set) and simple numeric-spec regexes (e.g., `r"(\d+)[- ]?port"` for port count) against `product_specs.spec_key = 'port_count'`. This keeps retrieval fast and deterministic — no LLM round-trip needed just to parse "48-port Cisco."
-- **SQL narrowing before Qdrant**: if filters extracted zero candidates matching known SQL values (i.e., no brand/spec matched anything), retrieval falls back to unscoped semantic search (same as v3) rather than returning zero results — this is a deliberate fallback, not a bug.
-- **Doc retrieval reuses product narrowing**: `retrieve_docs`, when it runs after `retrieve_products` in the same plan, is passed the already-found `product_ids` rather than re-running filter extraction — enforced by the Tool Executor passing prior step results forward as context to later steps in the same plan.
+- **Filter extraction is keyword/lookup, not an LLM call** — matches known `brand`/`category` values against the in-memory vocabulary sets and simple numeric-spec regexes (e.g., `r"(\d+)[- ]?port"` for port count, matched against `product_specs.spec_key = 'port_count'`). This keeps retrieval fast and deterministic.
+- **SQL narrowing before Qdrant**: if filters extracted zero candidates matching known SQL values, retrieval falls back to tenant-scoped Qdrant search (no `product_id` filter) rather than returning zero results — this is a deliberate fallback, not a bug.
+- **Doc retrieval uses ExecutionContext**: `retrieve_docs`, when it runs after `retrieve_products` in the same plan, calls `context.get_product_ids()` to get the already-found `product_ids` from the `ExecutionContext` (Module 10). If `product_ids` is `None` (ExecutionContext has no prior `retrieve_products` result), `retrieve_docs` performs a tenant-scoped Qdrant search without a `product_id` filter and logs `DEBUG`.
+- **Vocabulary refresh**: `FilterExtractor._brands` and `FilterExtractor._categories` are populated lazily on first call per tenant via `ProductRepository.get_distinct_values(tenant_id, columns=['brand','category'])`. They are **not** refreshed during the process lifetime; a process restart is required to pick up newly ingested brands/categories.
+- **Ingestion script**: Run with `python scripts/ingest_products_and_docs.py --source products.json --tenant-id $DEFAULT_TENANT_ID`. Input format: JSON array of `{name, brand, category, description, specs: [{key, value}], source_path}` objects. The script calls `IngestionService.ensure_collections()` then `IngestionService.ingest_products()` then `IngestionService.ingest_documents()` in that order.
 
 ## 20. Validation Rules
 - `query` must be non-empty after trimming.
@@ -160,8 +179,13 @@ N/A (internal tool invocation, not HTTP).
 ## 23. Unit Tests
 - `test_filter_extraction_finds_brand_and_port_count`
 - `test_filter_extraction_returns_empty_when_no_match`
+- `test_filter_extraction_conflict_uses_first_match`
 - `test_retrieval_service_falls_back_to_unscoped_search_when_no_filters_match`
-- `test_retrieve_docs_reuses_product_ids_from_prior_step`
+- `test_retrieve_docs_reuses_product_ids_from_execution_context`
+- `test_retrieve_docs_scoped_to_tenant_when_no_product_ids_in_context`
+- `test_bge_m3_embedder_produces_1024_dimensional_vectors`
+- `test_rag_hit_metric_incremented_on_non_empty_result`
+- `test_rag_hit_metric_incremented_false_on_empty_result`
 
 ## 24. Integration Tests
 - `test_ingestion_and_retrieval_roundtrip` — ingest a fixture product set, query, assert expected product ranks first.

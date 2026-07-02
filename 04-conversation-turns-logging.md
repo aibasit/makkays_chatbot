@@ -70,10 +70,13 @@ tests/
 `TurnsRepository.create(turn: ConversationTurnCreate) -> ConversationTurn` — single `INSERT`, no update/delete methods (append-only by design; corrections are new turns, never edits).
 
 ## 12. Service Layer
-`TurnsService.record_turn(tenant_id, session_id, turn_number, user_message, assistant_message, intent_result, prompt_versions, tool_calls) -> None` — assembles the `ConversationTurnCreate` and calls the repository; called exactly once per turn, at the end of `Orchestrator.on_turn`, after all other modules have contributed their piece of the record (Router's intent, Planner's prompt version, Tool Executor's tool_calls).
+`TurnsService.record_turn(tenant_id, session_id, turn_number, user_message, assistant_message, intent_result, prompt_versions, tool_calls) -> None` — assembles the `ConversationTurnCreate` and calls the repository; called exactly once per turn, at the end of `Orchestrator.on_turn`, after all other modules have contributed their piece of the record.
+
+`TurnsService.get_next_turn_number(tenant_id, session_id) -> int` — executes: `SELECT COALESCE(MAX(turn_number), 0) + 1 FROM conversation_turns WHERE tenant_id=:tid AND session_id=:sid FOR UPDATE` within the current transaction. This locking query prevents turn number duplication race conditions during concurrent turns.
 
 ## 13. Internal Interfaces
 - Every module that has "something worth debugging later" contributes to the turn record by returning a value the Orchestrator threads into `record_turn` — this module does not reach into other modules; it is a pure sink.
+- `record_turn` receives the complete `assistant_message` as built by the final `respond` step (the last item in the Tool Executor's result list). If no `respond` step ran (e.g., clarification flow instead), `assistant_message` is the `ClarificationResult.question_text`. The Orchestrator is responsible for assembling this before calling `record_turn`.
 - `get_logger(name: str) -> logging.Logger` exported from `logging_config.py`, used by every module (`logger = get_logger(__name__)`), replacing ad hoc `logging.getLogger`.
 
 ## 14. Database Tables
@@ -94,6 +97,7 @@ CREATE TABLE conversation_turns (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_conversation_turns_session ON conversation_turns (tenant_id, session_id, turn_number);
+CREATE UNIQUE INDEX uidx_turns_session_number ON conversation_turns (tenant_id, session_id, turn_number);
 ```
 
 ## 15. Redis Keys
@@ -109,7 +113,7 @@ N/A.
 N/A.
 
 ## 19. Business Logic
-- `turn_number` is monotonically increasing per `(tenant_id, session_id)`; computed by the Orchestrator as `previous_max + 1` (simplest: `SELECT COALESCE(MAX(turn_number),0)+1 ...` inside the same transaction as the insert, to avoid a race in local single-process dev — acceptable at this scale; documented as a future concern if concurrent requests per session ever occur).
+- `turn_number` is monotonically increasing per `(tenant_id, session_id)`; computed by the Orchestrator calling `TurnsService.get_next_turn_number(tenant_id, session_id)`. The query uses `FOR UPDATE` inside the same transaction as the insert to lock the session's rows, preventing duplicate turn number insertion in local single-process development. Note that this database-level lock is insufficient for distributed multi-process environments where distributed locks or custom sequence tables might be needed.
 - `prompt_version` is deliberately a small JSON object (not a single tag) per architecture §2.7, so a `WHERE prompt_version->>'intent' = 'sales_inquiry_v2'` query can isolate exactly which prompt was live for any turn.
 
 ## 20. Validation Rules
@@ -126,6 +130,7 @@ N/A.
 ## 22. Logging Strategy
 - This module *is* the logging strategy for per-turn detail (Postgres sink) plus the general-purpose structured logger (stdout JSON) used everywhere else.
 - Every log line: `{"timestamp", "level", "logger", "message", "tenant_id"?, "session_id"?, ...extra}`.
+- Message content fields (`user_message`, `assistant_message`) are NEVER logged at the application log level (they only exist inside the `conversation_turns` database table). The `SecretRedactionFilter` does not need to scan message text because message text is never in the log stream — only metadata (`intent`, `session_id`, `tenant_id`) is logged.
 - `SecretRedactionFilter` applied globally at handler-attach time in `configure_logging`.
 - Log level controlled by `LOG_LEVEL` env var (`Settings.logging.log_level`), default `INFO`.
 
@@ -138,6 +143,7 @@ N/A.
 - `test_record_turn_inserts_row_with_correct_turn_number`
 - `test_record_turn_sequential_numbering_per_session`
 - `test_record_turn_failure_does_not_raise` (simulate DB error, assert no exception propagates)
+- `test_concurrent_turns_for_same_session_have_unique_turn_numbers` — verifies that two parallel requests for the same session produce non-duplicate `turn_number` values and database throws a unique constraint exception that gets handled.
 
 ## 25. Configuration
 `Settings.logging.log_level` (from Module 01). No new settings.

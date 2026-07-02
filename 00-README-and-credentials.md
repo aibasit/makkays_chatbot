@@ -29,6 +29,10 @@ committed — add `.env` to `.gitignore` on day one).
 | `CRM_API_KEY` | CRM Integration (M14) | CRM provider dashboard | Yes (stub/mock acceptable for local dev) |
 | `SITE_API_KEY` | Public API (M15) | Self-generated (`openssl rand -hex 32`) — this is a key **you** issue to your own frontend widget, not a third-party key | Yes |
 | `DEFAULT_TENANT_ID` | Multi-tenancy foundation, all tables | Self-defined UUID, e.g. `00000000-0000-0000-0000-000000000001` | Yes |
+| `OLLAMA_TIMEOUT_SECONDS` | LLM Engine (M05) | Integer seconds; default `30`. Increase on slow hardware. | No (has safe default) |
+| `PROMPT_LIBRARY_PATH` | Prompt Manager (M08) | Path to the `prompt_library/` directory; default `./prompt_library` relative to project root. | No (has safe default) |
+| `SECURITY_POLICY_DIR` | Tool Executor (M10) | Path to the `security_policies/` directory; default `./security_policies` relative to project root. | No (has safe default) |
+| `CORS_ALLOW_ORIGINS` | Foundation (M01) | Comma-separated list of allowed frontend origins, e.g. `http://localhost:5173`. | No (has safe default) |
 | `JWT_SECRET` (optional, if internal admin auth is added later) | Not used in v4.1 scope | N/A | No — not in current architecture |
 
 ### 1.1 `.env` file skeleton (project root)
@@ -70,6 +74,16 @@ ENABLE_CRM=true
 ENABLE_TICKETS=true
 ENABLE_IMAGE_UPLOAD=false
 ENABLE_LLM_CLARIFICATION_REWRITE=false
+
+# --- LLM Tuning (optional — safe defaults apply) ---
+OLLAMA_TIMEOUT_SECONDS=30
+
+# --- Path Overrides (optional — safe defaults apply) ---
+PROMPT_LIBRARY_PATH=./prompt_library
+SECURITY_POLICY_DIR=./security_policies
+
+# --- CORS (development only) ---
+CORS_ALLOW_ORIGINS=http://localhost:5173
 
 # --- Logging ---
 LOG_LEVEL=INFO

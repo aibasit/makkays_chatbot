@@ -47,10 +47,12 @@ tests/
 ## 8. Classes
 - `MetricsRegistry` — thin wrapper exposing typed increment/observe methods so callers never touch `prometheus_client` directly:
   - `increment_intent_classification(source: str, intent: str)`
+  - `increment_intent_classification(source: Literal['tier1','tier2'], intent: str)`
   - `record_intent_confidence(confidence: float)`
   - `increment_rag_hit(hit: bool)`
   - `increment_quote_result(success: bool)`
   - `increment_crm_sync_result(success: bool)`
+  - `increment_lead_created()`
   - `observe_chat_latency(seconds: float)`
 
 ## 9. Data Models
@@ -66,8 +68,9 @@ N/A.
 `MetricsRegistry` methods (§8) are called inline by other modules at the relevant point in their own logic — e.g., Module 06's `Router.classify` calls `increment_intent_classification` and `record_intent_confidence` right after computing `IntentResult`; Module 11's `RetrievalService` calls `increment_rag_hit`; Module 12's `QuoteBuilder`/`QuoteExplainer` boundary calls `increment_quote_result`; Module 14's `RetryWorker` calls `increment_crm_sync_result`.
 
 ## 13. Internal Interfaces
-- `MetricsRegistry` is a process-wide singleton (module-level instance), imported directly by other modules — no `Depends()` injection needed since metrics have no per-request state.
-- `GET /metrics` returns `prometheus_client.generate_latest()` output — a human/tool-readable text format, consumable locally via `curl localhost:8000/metrics` even with no Prometheus server running.
+- `MetricsRegistry` is a process-wide singleton — module-level instance created in `app/observability/metrics.py` as `metrics_registry = MetricsRegistry()`. Other modules import it as `from app.observability.metrics import metrics_registry`. No `Depends()` injection needed since metrics have no per-request state. **Test isolation**: in unit tests, modules under test should patch `app.observability.metrics.metrics_registry` with a `MagicMock()` or a `FakeMetricsRegistry` that no-ops all calls — this prevents test runs from polluting the global Prometheus registry.
+- `GET /metrics` returns `prometheus_client.generate_latest()` output — human/tool-readable Prometheus text format, consumable via `curl localhost:8000/metrics`.
+- `GET /ready`: performs three checks (see §19), returns HTTP 200 with `status: "ready"` when all pass, HTTP 503 with `status: "not_ready"` and per-check detail when any fail. HTTP 503 is chosen so `curl -f` and load-balancer health gates work without parsing the response body.
 
 ## 14. Database Tables
 None.
@@ -76,10 +79,12 @@ None.
 None.
 
 ## 16. API Endpoints
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/metrics` | Aggregated counters/gauges in Prometheus text format |
-| GET | `/ready` | Readiness check — DB + Redis + Ollama all reachable |
+| Method | Path | Purpose | Owner |
+|---|---|---|---|
+| GET | `/metrics` | Aggregated counters/gauges in Prometheus text format | This module (M16) |
+| GET | `/ready` | Readiness check — DB + Redis + Ollama all reachable | This module (M16) |
+
+Note: `GET /health` is owned exclusively by Module 01 (`main.py`). `POST /chat` is owned by Module 15. This module does not own or re-implement those endpoints.
 
 ## 17. Request Models
 None (both are parameterless GETs).
@@ -90,13 +95,19 @@ None (both are parameterless GETs).
 ## 19. Business Logic
 Metrics tracked, matching architecture §2.12's examples:
 - `intent_classification_total{source, intent}` (counter)
-- `intent_low_confidence_rate` (derived: track `intent_confidence_total` histogram, compute rate of sub-threshold observations)
-- `rag_hit_total{hit}` (counter, "hit" = at least one result above a relevance floor)
+- `intent_confidence_histogram` (histogram, track `confidence: float` observations per call, p50/p95 derivable from bucket data; bucket boundaries: `[0.0, 0.3, 0.5, 0.7, 0.9, 1.0]`)
+- `rag_hit_total{hit}` (counter, "hit" = at least one result returned by Qdrant)
 - `quote_result_total{success}` (counter)
 - `crm_sync_result_total{success}` (counter)
-- `chat_latency_seconds` (histogram, p50/p95 derivable from bucket data)
+- `lead_created_total` (counter)
+- `chat_latency_seconds` (histogram, measured at Module 15 from request start to response end)
 
-`/ready` performs three lightweight checks: `SELECT 1` (DB), `PING` (Redis), a cheap Ollama `/api/tags` call (confirms the model server is up, without a full inference call) — all three must pass for `status: "ready"`.
+`/ready` performs three lightweight checks:
+1. `SELECT 1` via the SQLAlchemy engine (DB check). Timeout: 2s.
+2. Redis `PING` via the shared Redis client (Module 02). Timeout: 2s.
+3. `GET {OLLAMA_HOST}/api/tags` — a cheap Ollama endpoint that lists loaded models, confirming the server is up without running a full inference call. Timeout: 3s.
+
+All three must pass for `status: "ready"`. If any fails, `status: "not_ready"` with a `checks` dict `{"db": bool, "redis": bool, "ollama": bool}`. HTTP response code: **200** when ready, **503** when not ready.
 
 ## 20. Validation Rules
 None (read-only endpoints, no user input).
@@ -104,8 +115,8 @@ None (read-only endpoints, no user input).
 ## 21. Error Handling
 | Error | Handling |
 |---|---|
-| One or more `/ready` checks fail | Returns `status: "not_ready"` with per-check detail, HTTP 200 (readiness endpoints conventionally return 200 with a status field, or optionally 503 — document the chosen convention and keep it consistent; recommend 503 when not ready, so a naive `curl -f` check works too) |
-| Metrics registry somehow errors during scrape | Should not happen with `prometheus_client`'s in-memory registry; if it does, return 500 and log `ERROR` |
+| One or more `/ready` checks fail | Returns `status: "not_ready"` with `checks: {db, redis, ollama}` booleans, **HTTP 503** (so `curl -f` and load-balancer checks fail automatically without parsing response body) |
+| Metrics registry errors during scrape | Should not happen with `prometheus_client`'s in-memory registry; if it does, return 500 and log `ERROR` |
 
 ## 22. Logging Strategy
 This module doesn't add new logging beyond what Module 04 already provides; it exists specifically to keep aggregated trend data **out** of the log stream, per the architecture's explicit separation. No log line should ever be a substitute for a metric here.
@@ -113,6 +124,12 @@ This module doesn't add new logging beyond what Module 04 already provides; it e
 ## 23. Unit Tests
 - `test_metrics_registry_increment_and_read_back`
 - `test_metrics_registry_confidence_histogram_buckets`
+- `test_increment_lead_created_increments_correct_counter`
+- `test_metrics_registry_is_no_op_when_patched_with_mock` (demonstrates test isolation pattern)
+- `test_ready_returns_200_when_all_checks_pass`
+- `test_ready_returns_503_when_db_unreachable`
+- `test_ready_returns_503_when_redis_unreachable`
+- `test_ready_returns_503_when_ollama_unreachable`
 
 ## 24. Integration Tests
 - `test_metrics_endpoint_returns_prometheus_text_format`

@@ -57,6 +57,8 @@ No persistence — this module is a stateless outbound-call wrapper.
 ## 10. Pydantic Schemas
 `ChatMessage`, `ToolCall`, `ToolResult`, `LLMResponse` as above; `StructuredOutputRequest { schema: dict, messages: list[ChatMessage] }` for the JSON-mode path used by `classify_intent` (Module 06) and quote explanation (Module 12).
 
+`ToolResult` full definition: `{ role: Literal["tool"], content: str, tool_call_id: str }` — the message appended to the conversation after executing a tool call, sent back to the LLM in a follow-up `chat` call. `tool_call_id` must match the `ToolCall.id` of the original request; Ollama requires this pairing for multi-turn tool loops.
+
 ## 11. Repository Layer
 N/A — no persistence.
 
@@ -66,7 +68,12 @@ N/A — no persistence.
 ## 13. Internal Interfaces
 - `async chat(messages, tools, response_format, temperature) -> LLMResponse` — the **only** method other modules call.
 - `build_tool_schema(name, description, parameters: dict) -> dict` — used by Module 10 (Tool Executor) to register tool schemas that get passed into `chat(tools=...)`.
-- Timeout enforced via `asyncio.wait_for` wrapping the HTTP call — default `LLM_TIMEOUT_SECONDS = 30`.
+- Timeout enforced via `asyncio.wait_for` wrapping the HTTP call — default value read from `settings.ollama.timeout_seconds` (env var `OLLAMA_TIMEOUT_SECONDS`, default `30`).
+- HTTP transport: `httpx.AsyncClient` with a shared instance created once at module level (not per-call). Configure with `timeout=httpx.Timeout(connect=5.0, read=settings.ollama.timeout_seconds, write=5.0, pool=2.0)`. The client is closed in the app's shutdown lifespan hook (Module 01 §19).
+- Ollama request shapes (both use `stream: false`):
+  - Tool-calling mode: `{"model": settings.ollama.model, "messages": [...], "tools": [...], "stream": false}`
+  - Structured output mode: `{"model": settings.ollama.model, "messages": [...], "format": <json-schema-dict>, "stream": false}`
+- If `tools` are provided but `LLMResponse.tool_calls` is empty and `content` is non-empty: return the `LLMResponse` as-is. An empty `tool_calls` list is a valid Ollama response; the caller treats it as a classification failure. Do NOT raise an error.
 
 ## 14. Database Tables
 None.
@@ -117,15 +124,15 @@ N/A (Python-level interface, not HTTP-exposed).
 
 ## 25. Configuration
 ```
-llm:
+ollama:
   host: str            # OLLAMA_HOST
   model: str           # OLLAMA_MODEL
-  timeout_seconds: int = 30
+  timeout_seconds: int = 30   # OLLAMA_TIMEOUT_SECONDS (defined in Module 00 and Module 01 Settings)
   default_temperature: float = 0.0
 ```
 
 ## 26. Environment Variables
-`OLLAMA_HOST`, `OLLAMA_MODEL` (already defined in Module 00).
+`OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_SECONDS` (all defined in Module 00 §1.1).
 
 ## 27. Sequence Diagram
 ```

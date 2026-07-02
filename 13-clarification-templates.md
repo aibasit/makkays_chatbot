@@ -64,15 +64,26 @@ No new tables — reuses `conversation_state.clarification_candidates`, `.clarif
 None new — uses `ConversationStateRepository`/`SessionStateService` (Module 03) to read/increment `clarification_rounds` and persist `last_question`.
 
 ## 12. Service Layer
-`ClarificationFlow.run(tenant_id, session_id, candidates: list[str]) -> ClarificationResult`:
-1. `rounds = SessionStateService.get_conversation_state(...).clarification_rounds`.
-2. If `rounds >= MAX_CLARIFICATION_ROUNDS` (config, default 2): raise `MaxClarificationRoundsExceededError` — caller (Orchestrator) catches this and falls back to `escalation_request`, per architecture §3 ("Clarification loops beyond max rounds — unchanged from v4 — falls back to escalation_request").
-3. `template_name = TemplateLookup.resolve(candidates)`.
-4. `template_text = PromptManager.get("clarification", template_name, "latest")` (Module 08).
-5. If `flags.enable_llm_clarification_rewrite`: call `OllamaClient.chat` (Module 05) with `llm_rewrite_instructions_v1.md` as system prompt + the template as the fixed content to reword — the prompt explicitly instructs the model it may **only** reword, never add/remove/alter options; response validated post-hoc (see §20) to contain the same option set as the original template.
-6. Else: `question_text = template_text` verbatim.
-7. `SessionStateService.update_conversation_state(..., awaiting_clarification=True, last_question=question_text)`, increment `clarification_rounds`.
-8. Return `ClarificationResult`.
+`ClarificationFlow.run(tenant_id: UUID, session_id: str, intent_result: IntentResult, facts: FactsSchema, state: ConversationStateSchema) -> ClarificationResult`:
+1. Read current `clarification_rounds = state.clarification_rounds` from the already-loaded state (passed in from Orchestrator — no extra DB read needed).
+2. If `clarification_rounds >= MAX_CLARIFICATION_ROUNDS` (constant = `2`, defined in `clarification/service.py`, not env-configurable in v4.1): raise `MaxClarificationRoundsExceededError(session_id=session_id, rounds=clarification_rounds)` — caller (Orchestrator, Module 06) catches this and overrides `intent_result.intent = 'escalation_request'`, then falls through to the Planner.
+3. `template_name = TemplateLookup.resolve(intent_result.candidates)`.
+4. `template_text = prompt_manager.get("clarification", template_name, "1")` (Module 08 `prompt_manager` singleton). If `PromptNotFoundError` is raised for the specific match, retry with `generic_fallback` (never block if fallback is present; if fallback too is missing, Module 08's startup self-check would have caught it already).
+5. If `flags.enable_llm_clarification_rewrite` (flag passed in from Orchestrator's already-resolved `FeatureFlags`): call `ollama_client.chat(messages=[system_msg, user_msg], temperature=0.2)` where `system_msg.content = prompt_manager.get('clarification', 'llm_rewrite_instructions', '1')` and `user_msg.content = template_text`. If the LLM call throws or validation fails (see §20), fall back to verbatim `template_text`.
+6. Else: `question_text = template_text`.
+7. Atomically increment `clarification_rounds` and persist `last_question` in one operation: call `SessionStateService.update_clarification_state(tenant_id, session_id, question_text=question_text)` which issues: `UPDATE conversation_state SET clarification_rounds = clarification_rounds + 1, last_question = :q, awaiting_clarification = true WHERE tenant_id = :t AND session_id = :s` — single SQL, no Python read-modify-write (Module 03 §11 atomic increment pattern).
+8. Return `ClarificationResult(question_text=question_text, source='template+llm_rewrite' if rewrite_used else 'template')`.
+
+`TemplateLookup.resolve(candidates: list[str]) -> str`:
+- `TEMPLATE_MAP: dict[frozenset[str], str]` — defined as a module-level constant in `clarification/service.py`:
+  ```python
+  TEMPLATE_MAP = {
+      frozenset({'sales_inquiry', 'technical_support', 'quote_request'}): 'sales_vs_support_vs_quote',
+      frozenset({'sales_inquiry', 'technical_support'}): 'sales_vs_support',
+      frozenset({'sales_inquiry', 'quote_request'}): 'sales_vs_quote',
+  }
+  ```
+- Returns `TEMPLATE_MAP.get(frozenset(candidates), 'generic_fallback')`. The `frozenset` coercion makes order-independent matching work correctly.
 
 ## 13. Internal Interfaces
 - `run(tenant_id, session_id, candidates) -> ClarificationResult` — the sole entrypoint, called by `Orchestrator.on_turn` (Module 06) in place of Planner/Tool Executor when confidence is below threshold.
@@ -99,8 +110,9 @@ N/A.
 - **Constrained rewrite**: when enabled, the LLM may reword sentence structure and reference what the user just said, but the enumerated option list itself is fixed by the template — the same "LLM explains, never decides" boundary applied specifically to clarification.
 
 ## 20. Validation Rules
-- If LLM rewrite is enabled, the rewritten text is validated post-hoc: every bullet/option string present in the original template must appear (allowing minor casing/punctuation normalization) in the rewritten text — if validation fails, **discard the rewrite and fall back to the verbatim template** rather than risk an altered option set reaching the user. This validation is a simple substring/fuzzy-match check, not another LLM call.
-- `clarification_rounds` increment is atomic with the read-check in step 2 above (uses the same write-through update path as Module 03, no separate race-prone read-then-write outside the service).
+- If LLM rewrite is enabled, the rewritten text is validated post-hoc by checking that every option line extracted from the original template is present (case-insensitive substring match) in the rewritten text. "Option lines" are defined as lines beginning with `- ` or `*` or containing a numbered prefix `N.` in the original template. If any option line is missing from the rewritten text, **discard the rewrite and use the verbatim template** — log `WARNING('clarification_rewrite_validation_failed', missing_options=[...])`.
+- `MAX_CLARIFICATION_ROUNDS = 2` — module-level constant in `clarification/service.py`. Not env-configurable in v4.1 scope. Any change requires a code edit.
+- `clarification_rounds` increment is atomic: always uses the SQL `UPDATE ... SET clarification_rounds = clarification_rounds + 1 ...` pattern (Module 03 §11). Never read-then-write in Python.
 
 ## 21. Error Handling
 | Error | Handling |
@@ -116,8 +128,15 @@ N/A.
 
 ## 23. Unit Tests
 - `test_template_lookup_matches_known_candidate_set`
+- `test_template_lookup_matches_regardless_of_candidate_order`
 - `test_template_lookup_falls_back_to_generic`
 - `test_clarification_flow_verbatim_when_rewrite_disabled`
+- `test_clarification_flow_uses_llm_rewrite_when_enabled`
+- `test_clarification_flow_falls_back_to_verbatim_when_rewrite_fails_validation`
+- `test_clarification_flow_raises_max_rounds_exceeded_at_threshold`
+- `test_clarification_flow_does_not_raise_before_threshold`
+- `test_clarification_round_increment_is_atomic` (verify SQL UPDATE...SET clarification_rounds = clarification_rounds + 1 is issued, not two separate queries)
+- `test_template_lookup_prompt_not_found_falls_back_to_generic`
 - `test_clarification_flow_raises_after_max_rounds`
 - `test_rewrite_validation_rejects_altered_option_set`
 - `test_rewrite_validation_accepts_reworded_but_option_preserving_text`

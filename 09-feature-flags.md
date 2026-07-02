@@ -60,12 +60,11 @@ tests/
 
 ## 12. Service Layer
 `FeatureFlagsService.resolve(tenant_id) -> FeatureFlags`:
-1. Start from `Settings.flags` (env defaults, Module 01).
-2. Fetch DB overrides via repository.
-3. For each flag present in the DB result, override the env default.
-4. Return the merged `FeatureFlags` object.
-
-Cached in-process per tenant for a short period (e.g., 60s local in-memory cache) to avoid a DB round trip on every single turn — acceptable staleness for a local-dev, single-tenant setup; documented as a tunable, not a hard requirement.
+1. Check `_cache: cachetools.TTLCache(maxsize=10, ttl=60)` (keyed by `tenant_id`). If present and not expired, return cached `FeatureFlags`. Implement using `cachetools.TTLCache` (from the `cachetools` PyPI package) — NOT `functools.lru_cache`, which has no TTL support.
+2. Start with env-default `FeatureFlags` from `Settings.flags`.
+3. Query `feature_flags` table for `tenant_id` rows; merge any overrides. If the table does not exist (`ProgrammingError`), skip DB lookup and log `WARNING('feature_flags table absent, using env defaults')`.
+4. Filter DB rows through `VALID_FLAG_NAMES` (see §20) before merging.
+5. Store the merged result in `_cache[tenant_id]` and return.
 
 ## 13. Internal Interfaces
 - `resolve(tenant_id) -> FeatureFlags` — called once per turn by the Orchestrator (Module 06), result passed into both `TaskPlanner.build_plan` (Module 07) and Tool Executor's registration check (Module 10).
@@ -94,13 +93,14 @@ N/A.
 N/A (internal `FeatureFlags` object only).
 
 ## 19. Business Logic
-- **Two consultation points**, per architecture §2.15:
-  1. **Planner** (Module 07) — skips plan steps gated by a disabled flag.
-  2. **Tool registration** (Module 10) — a disabled tool is not exposed to the LLM's tool schema at all, so it cannot even be speculatively called. This is stricter than the Planner check alone (belt-and-suspenders with the Security Policy in Module 10).
+- The `FeatureFlags` object resolved here is a **snapshot** valid for the duration of the turn. Both the Planner (Module 07) and Tool Executor (Module 10) receive the same `FeatureFlags` object from the Orchestrator (Module 06). Neither module calls `FeatureFlagsService.resolve` again within the same turn.
+- Tool schema registration in Module 10 is also driven by this snapshot: tools for disabled features are excluded from the LLM's tool list.
+- **Cache propagation delay**: flag changes take up to 60 seconds to propagate due to the in-process `TTLCache`. For security-sensitive flags (`enable_quotes`, `enable_crm`), this window is acceptable in local dev because the Security Policy layer (Module 10) validates execution against the current `FeatureFlags` snapshot on every plan execution regardless of cache state. Disabling a flag will prevent plan execution within one cache TTL even if the tool momentarily appears in the LLM schema.
 - Env defaults exist so the system works correctly with **zero rows** in `feature_flags` — the DB table is purely an override mechanism, never a required source of truth.
 
 ## 20. Validation Rules
-- `flag_name` must be one of the six fixed names — an unrecognized `flag_name` in the DB is ignored with a `WARNING` log (defensive against typos), not applied.
+- Valid flag names are defined as: `VALID_FLAG_NAMES: frozenset[str] = frozenset({'enable_rag', 'enable_quotes', 'enable_crm', 'enable_tickets', 'enable_image_upload', 'enable_llm_clarification_rewrite'})`. This constant is defined in `schemas.py` and used by the repository layer to filter DB rows before merging into `FeatureFlags`. Unrecognized `flag_name` values from the DB are silently ignored.
+- A `flag_value` that is not a valid boolean string (`"true"`, `"false"`, `"1"`, `"0"`) logs `WARNING` and is ignored (not merged).
 
 ## 21. Error Handling
 | Error | Handling |

@@ -17,7 +17,7 @@ durable retry queue pattern. Email notifications give the sales team immediate
 visibility into new leads/quotes without polling the CRM.
 
 ## 4. Dependencies
-Module 02 (DB), Module 03 (Facts — carried into the lead record), Module 09 (`ENABLE_CRM` flag), Module 10 (registered as `create_lead` tool + policy).
+Module 01 (lifespan hooks — `register_hooks(app, settings)` registers the APScheduler scheduler), Module 02 (DB), Module 03 (Facts — `contact_name`, `contact_email`, `contact_phone` carried into the lead record from `session_facts`), Module 09 (`ENABLE_CRM` flag), Module 10 (registered as `create_lead` tool + policy), Module 12 (`notify_quote_generated` called by Module 12's `QuoteBuilder.build` as a fire-and-forget task).
 
 ## 5. Folder Structure
 ```
@@ -89,24 +89,52 @@ tests/
 `RetryQueueRepository`: `enqueue(tenant_id, lead_id, next_attempt_at)`, `get_due(limit) -> list[RetryQueueEntry]`, `mark_succeeded(id)`, `mark_failed(id, error, next_attempt_at)`, `mark_permanently_failed(id)`.
 
 ## 12. Service Layer
-`LeadService.create_lead(tenant_id, session_id, facts: FactsSchema, contact: LeadCreate) -> LeadRecord`:
-1. Snapshot current Facts into `facts_snapshot`.
-2. `LeadRepository.create(...)` with `crm_synced=false`.
-3. `RetryQueueRepository.enqueue(tenant_id, lead.id, next_attempt_at=now())` (first attempt is immediate, subsequent ones backoff).
-4. `NotificationService.notify_new_lead(lead)` (fire-and-forget, failure does not block lead creation — see §21).
-5. Return `LeadRecord`.
+`LeadService.create_lead(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult`:
+1. Validate `contact_info_complete(session.facts)` (predicate from Module 10's `PREDICATE_REGISTRY`): at least one of `facts.contact_email` or `facts.contact_phone` must be non-None. If not, raise `IncompleteLeadDataError` — log `WARNING('create_lead_missing_contact', session_id=session.session_id)` before raising.
+2. If `facts.contact_email` present, validate with Pydantic `EmailStr` — raise `ValidationError` on failure.
+3. Build `contact = LeadCreate(company=session.facts.company or '', contact_name=session.facts.contact_name, contact_email=session.facts.contact_email, contact_phone=session.facts.contact_phone)`.
+4. `lead = await LeadRepository.create(session.tenant_id, session.session_id, data=contact, facts_snapshot=session.facts.model_dump_json())`.
+5. `await RetryQueueRepository.enqueue(session.tenant_id, lead.id, next_attempt_at=datetime.utcnow())`.
+6. `asyncio.create_task(NotificationService.notify_new_lead(lead))` — fire-and-forget; failures swallowed and logged at `WARNING`.
+7. `MetricsRegistry.increment_lead_created()`.
+8. Return `ToolExecutionResult(step='create_lead', success=True, result_summary=f'Lead created for {contact.company}', product_ids=None)`.
 
-`RetryWorker.run()` (APScheduler-invoked every N seconds, e.g. 60):
-1. `due = RetryQueueRepository.get_due(limit=20)`.
-2. For each entry: `success = await CrmClient.push_lead(lead)`.
-3. On success: `mark_synced`, `mark_succeeded`.
-4. On failure: increment `attempt_count`; if `< MAX_RETRY_ATTEMPTS` (config, default 5), `mark_failed` with exponential backoff (`next_attempt_at = now() + 2**attempt_count minutes`); else `mark_permanently_failed` and log `ERROR` for manual follow-up.
+`RetryWorker.run()` (APScheduler interval job, every `settings.crm.retry_worker_interval_seconds` seconds, default 60):
+1. `due = await RetryQueueRepository.get_due(limit=20)` — `SELECT ... WHERE status = 'pending' AND next_attempt_at <= now() FOR UPDATE SKIP LOCKED` (SKIP LOCKED prevents double-processing if multiple workers were ever added).
+2. For each entry:
+   a. `lead = await LeadRepository.get(entry.tenant_id, entry.lead_id)`.
+   b. `success = await CrmClient.push_lead(lead)` — raises on network errors, returns `False` on non-2xx CRM response.
+   c. If success: `await LeadRepository.mark_synced(lead.id, crm_contact_id=response.contact_id)`, `await RetryQueueRepository.mark_succeeded(entry.id)`.
+   d. If failure: `new_count = entry.attempt_count + 1`. If `new_count < settings.crm.max_retry_attempts` (default 5): `backoff_minutes = 2 ** new_count` (exponential: 2min, 4min, 8min, 16min, 32min), `await RetryQueueRepository.mark_failed(entry.id, error=str(e), next_attempt_at=now() + timedelta(minutes=backoff_minutes))`. Else: `await RetryQueueRepository.mark_permanently_failed(entry.id)`, log `ERROR('crm_sync_permanently_failed', lead_id=lead.id)`.
 
-`NotificationService.notify_new_lead(lead)` / `.notify_quote_generated(quote)` — render template, call `ResendClient.send`, swallow/log failures (email is best-effort, never a hard dependency of the core conversation flow).
+**APScheduler registration** (in `crm/retry_worker.py`, exposed via `register_hooks`):
+```python
+def register_hooks(app: FastAPI, settings: Settings) -> None:
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        RetryWorker.run,
+        trigger='interval',
+        seconds=settings.crm.retry_worker_interval_seconds,
+        id='crm_retry_worker',
+        max_instances=1,
+        coalesce=True,
+    )
+    app.state.scheduler = scheduler
+    # lifespan in Module 01 calls scheduler.start() on startup
+    # and scheduler.shutdown(wait=False) in the finally block
+```
+Module 01's `register_lifecycle_hooks` imports and calls this function.
+
+**Tool registration** (in `crm/__init__.py`):
+```python
+ToolRegistry.register('create_lead', LeadService.create_lead)
+```
 
 ## 13. Internal Interfaces
-- `create_lead` registered as a Tool Executor (Module 10) step, policy: `allowed_intents: [sales_inquiry, quote_request]`, `required_state: []`, `required_slots: [contact_info]` (a computed predicate — "contact info newly captured" per architecture §2.4 table), `rate_limit: "3/min per session"`, `audit_log: true`.
-- `RetryWorker.run` registered as an APScheduler job at app startup (Module 01's `create_app` lifespan hook), interval-based, local-process-only (no distributed job coordination needed at this scale).
+- `create_lead` registered as a Tool Executor (Module 10) step. Tool function signature: `async def create_lead_tool(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult`. Policy: `allowed_intents: [sales_inquiry, quote_request]`, `required_state: [contact_info_complete]`, `required_slots: []`, `rate_limit: "3/min"`, `audit_log: true`.
+- Contact fields (`contact_name`, `contact_email`, `contact_phone`) are read from `session.facts` — they are stored in `session_facts` (Module 03 §14) and populated by the LLM during normal conversation via Facts extraction. The Orchestrator (Module 06) sets `conversation_state.contact_info_captured = true` when it detects that at least one contact field has become non-None for the first time.
+- `RetryWorker.run` registered via `register_hooks(app, settings)` called from Module 01's `register_lifecycle_hooks`. Scheduler class: `AsyncIOScheduler` from `apscheduler.schedulers.asyncio`. Parameters: `trigger='interval'`, `seconds=settings.crm.retry_worker_interval_seconds`, `max_instances=1`, `coalesce=True` (skips a missed fire if a previous run is still executing).
+- `NotificationService.notify_new_lead` and `.notify_quote_generated` are async functions called as `asyncio.create_task(...)` from their respective callers (LeadService and QuoteBuilder). Failures are swallowed after being logged at `WARNING`.
 
 ## 14. Database Tables
 ```sql
@@ -175,10 +203,15 @@ N/A (internal tool invocation).
 
 ## 23. Unit Tests
 - `test_create_lead_requires_email_or_phone`
+- `test_create_lead_rejects_invalid_email_format`
 - `test_create_lead_snapshots_facts_at_creation_time`
-- `test_retry_worker_backoff_calculation`
-- `test_retry_worker_marks_permanently_failed_after_max_attempts`
+- `test_create_lead_reads_contact_from_session_facts`
+- `test_retry_worker_backoff_formula` (assert attempt 1 → 2min, attempt 2 → 4min, attempt 3 → 8min)
+- `test_retry_worker_marks_permanently_failed_at_max_attempts`
+- `test_retry_worker_skip_locked_prevents_double_processing`
 - `test_notification_failure_does_not_raise`
+- `test_scheduler_starts_and_stops_cleanly` (verify `scheduler.start()` / `scheduler.shutdown()` called in lifespan)
+- `test_lead_metric_incremented_on_creation`
 
 ## 24. Integration Tests
 - `test_create_lead_enqueues_retry_entry`

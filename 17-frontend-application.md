@@ -64,14 +64,14 @@ All files listed in §5.
 |---|---|
 | `main.tsx` | React root mount, wraps `App` in `QueryClientProvider` + `BrowserRouter` |
 | `App.tsx` | Route definitions (`/` → `ChatPage`, `*` → `NotFoundPage`) |
-| `api/client.ts` | Axios instance — base URL, `X-Site-Api-Key` header, `withCredentials: true` (required for the session cookie to be sent/received cross-port in local dev) |
-| `api/chat.ts` | `postChatMessage(message: string): Promise<ChatResponse>` — typed Axios call |
+| `api/client.ts` | Axios instance with: `baseURL: import.meta.env.VITE_API_BASE_URL` (default `http://localhost:8000`), `headers: {'X-Site-Api-Key': import.meta.env.VITE_SITE_API_KEY}`, `withCredentials: true` (required so the browser sends/receives the `HttpOnly` session cookie cross-port in local dev — without this, the cookie is silently dropped and every request gets a new session), `timeout: 30000` (30s, matching `OLLAMA_TIMEOUT_SECONDS` + overhead) |
+| `api/chat.ts` | `postChatMessage(message: string): Promise<ChatResponse>` — typed Axios POST to `/chat` |
 | `hooks/useChat.ts` | TanStack Query `useMutation` wrapper around `postChatMessage`, plus local message-list state |
-| `components/ChatWindow.tsx` | Scrollable message list container |
+| `components/ChatWindow.tsx` | Scrollable message list container, auto-scrolls to bottom on new message |
 | `components/MessageBubble.tsx` | Single message rendering (user vs assistant styling) |
-| `components/MessageInput.tsx` | Text input + send button, disabled while a request is in flight |
-| `components/ClarificationOptions.tsx` | Renders bullet options from a clarification response distinctly (visually) from a normal answer |
-| `components/RateLimitNotice.tsx` | Shown when a 429 is received |
+| `components/MessageInput.tsx` | Text input + send button; disabled while `isLoading === true` or `messages.length === 0` (empty message guard); character counter shown at 80% of max |
+| `components/ClarificationOptions.tsx` | Renders clarification options. Parsing: splits `assistant_message` on `\n` and collects lines starting with `- ` or `* ` or matching `/^\d+\.\s/` as individual option strings. Renders each as a clickable chip/button that, when clicked, calls `sendMessage(optionText)` — no interpretation of option content |
+| `components/RateLimitNotice.tsx` | Shown when a 429 is received; includes a client-side countdown timer (default 30s) after which the input re-enables |
 | `routes/ChatPage.tsx` | Composes `ChatWindow` + `MessageInput`, owns the message list via `useChat` |
 | `types/chat.ts` | `ChatMessage`, `ChatResponse` TypeScript types mirroring the backend's Pydantic schemas exactly |
 
@@ -95,8 +95,15 @@ N/A (frontend has no persistence layer of its own; all state is either in-memory
 `api/chat.ts` functions as the frontend's thin "service layer" — the only place Axios is called directly; components and hooks never call Axios themselves.
 
 ## 13. Internal Interfaces
-- `useChat()` hook returns `{ messages, sendMessage(text), isLoading, isRateLimited, error }` — the single interface `ChatPage` and any future embeddable widget variant consumes.
-- `postChatMessage(message) -> Promise<ChatResponse>` — the single interface `useChat` consumes.
+- `useChat(): { messages: ChatMessage[], sendMessage(text: string): void, isLoading: boolean, isRateLimited: boolean, rateLimitCooldownSeconds: number, error: string | null, retryLastMessage(): void }` — the single interface `ChatPage` consumes.
+  - `messages`: the current ordered list of all user and assistant messages for display.
+  - `sendMessage(text)`: validates non-empty/non-whitespace, appends a user `ChatMessage` optimistically, calls `postChatMessage`, on success appends the assistant reply; on error removes the optimistically-appended user message and sets `error`.
+  - `isLoading`: `true` while a `postChatMessage` request is in flight; controls input/button disabled state.
+  - `isRateLimited`: `true` when the last call returned 429; drives `RateLimitNotice` visibility.
+  - `rateLimitCooldownSeconds`: counts down from 30 to 0 when `isRateLimited` is `true`; managed by `setInterval` inside `useChat`; resets `isRateLimited` to `false` when it reaches 0.
+  - `error`: a human-readable error string (not a raw HTTP error); `null` when no error.
+  - `retryLastMessage()`: re-sends the last user message text. The retry button in the `MessageBubble` error state calls this.
+- `postChatMessage(message: string) -> Promise<ChatResponse>` — the single interface `useChat` consumes.
 
 ## 14. Database Tables
 N/A (frontend has no database).
@@ -108,15 +115,21 @@ N/A.
 Consumes (does not define): `POST /chat` (Module 15).
 
 ## 17. Request Models
-`ChatRequest { message: string }` sent as the Axios POST body; `X-Site-Api-Key` sent as a header (value baked in at build time via a Vite env var for local dev — `VITE_SITE_API_KEY` — acceptable for local dev only; production key handling is out of scope).
+`ChatRequest { message: string }` sent as the Axios POST body; `X-Site-Api-Key` sent as a header (value baked in via `import.meta.env.VITE_SITE_API_KEY`). The `.env.local` file (gitignored) must contain:
+```
+VITE_API_BASE_URL=http://localhost:8000
+VITE_SITE_API_KEY=<value from .env SITE_API_KEY>
+```
+`VITE_` prefix is required by Vite to expose env vars to browser code. Never put these in `vite.config.ts` directly; always use the `.env.local` file.
 
 ## 18. Response Models
 `ChatResponse` as defined in §9, parsed directly from the Axios response.
 
 ## 19. Business Logic
-- **Optimistic UI**: user's message is appended to `messages` immediately on send, before the network response returns; the assistant's reply is appended only once the response arrives (or an error/rate-limit notice is shown in its place).
-- **Clarification rendering**: when `awaiting_clarification: true`, `ClarificationOptions` renders the bullet list distinctly (e.g., a lightly bordered card) rather than as a plain chat bubble, making the template's bullet structure visually obvious to the user — this is purely presentational; the frontend does not parse or interpret the option text, it just renders whatever the backend sent.
-- **No client-side intent/plan logic**: the frontend never inspects `intent` to change its own behavior beyond passing `awaiting_clarification` through for styling — all decision-making stays server-side, matching the "FastAPI is the brain" principle end to end.
+- **Optimistic UI**: user's message is appended to `messages` immediately on send via `useChat.sendMessage`; the assistant's reply is appended only once the response arrives. On error, the optimistically-appended user message is **removed** from `messages` so the user can see the exact text they sent is no longer "in flight", and `error` is set to display an error bubble with a retry button.
+- **Retry button**: rendered inside the error message bubble by `MessageBubble` when `error` is non-null. The retry button calls `useChat.retryLastMessage()`, which re-sends `lastUserMessageText: string | null` stored in the hook's `useRef`. If `lastUserMessageText` is null (no prior message), the button is not rendered.
+- **Clarification rendering**: when `awaiting_clarification === true`, `ClarificationOptions` is rendered instead of `MessageBubble` for the assistant reply. It splits `assistant_message` on `\n`, filters to lines matching `^[-*]\s` or `^\d+\.\s`, and renders each as a clickable button that calls `sendMessage(line.replace(/^[-*\d.]+\s/, '').trim())`.
+- **No client-side intent/plan logic**: the frontend never inspects `intent` to change its own behavior beyond the `awaiting_clarification` boolean — all decision-making stays server-side.
 
 ## 20. Validation Rules
 - Empty/whitespace-only messages are not sent (send button disabled).
@@ -128,14 +141,27 @@ Consumes (does not define): `POST /chat` (Module 15).
 | 401 (bad/missing site key) | Should not occur in normal operation (key is build-time baked); if it does, show a generic "configuration error" notice, log to browser console |
 | 429 (rate limited) | Show `RateLimitNotice`, disable input for a short cooldown period (client-side timer, purely cosmetic — actual enforcement is server-side) |
 | 5xx / network error | Show a generic "something went wrong, please try again" message; the optimistically-appended user message remains visible so nothing is lost from the user's perspective; a retry button re-sends the same text |
-| Request timeout | Same as 5xx handling; Axios timeout configured at e.g. 35s (slightly above the backend's `LLM_TIMEOUT_SECONDS`, Module 05, so the frontend doesn't time out before the backend has a chance to) |
+| 401 | Configuration error notice. |
+| 429 | `RateLimitNotice` + input disabled for 30s. |
+| 5xx/Network | Keep optimistic user message in list, set `error`, show retry button. |
+| Timeout | Set to 30s in Axios config; handle like 5xx. |
 
 ## 22. Logging Strategy
 Browser `console.error` for unexpected failures only (no client-side structured logging pipeline in v4.1 scope — no analytics/telemetry infrastructure, matching the exclusion of monitoring infra from this local-dev-only documentation set).
 
 ## 23. Unit Tests
-- `useChat.test.tsx`: `sendMessage appends optimistic user message immediately`
-- `useChat.test.tsx`: `sendMessage appends assistant message on success`
+- `test_useChat_appends_user_message_optimistically_before_response`
+- `test_useChat_removes_optimistic_message_on_error`
+- `test_useChat_sets_error_string_on_network_failure`
+- `test_useChat_sets_is_rate_limited_on_429`
+- `test_useChat_cooldown_timer_resets_is_rate_limited`
+- `test_useChat_retry_last_message_resends_last_text`
+- `test_clarification_options_parses_bullet_lines_correctly`
+- `test_clarification_options_clickable_chip_calls_send_message`
+- `test_message_input_disabled_while_loading`
+- `test_message_input_disabled_when_empty`
+- `test_axios_instance_sends_site_api_key_header`
+- `test_axios_instance_has_with_credentials_true`
 - `useChat.test.tsx`: `sendMessage sets isRateLimited on 429`
 - `MessageBubble.test.tsx`: `renders user vs assistant styling correctly`
 - `ClarificationOptions.test.tsx`: `renders bullet options distinctly from plain text`

@@ -28,17 +28,17 @@ app/
 prompt_library/
 ├── system/
 │   └── base_v1.md
-├── intents/
-│   ├── sales_inquiry_v2.md
-│   ├── technical_support_v1.md
-│   └── quote_request_v1.md
+├── intent/
+│   └── classify_intent_v1.md
 ├── rag/
-│   └── context_v1.md
-├── tools/
-│   └── tool_instructions_v1.md
-└── clarification/
-    ├── sales_vs_support_vs_quote.md
-    └── generic_fallback.md
+│   ├── context_inject_v1.md
+│   └── filter_extract_v1.md
+├── clarification/
+│   ├── llm_rewrite_instructions_v1.md
+│   └── escalation_v1.md
+└── tools/
+    ├── tool_instructions_v1.md
+    └── quote_explanation_v1.md
 tests/
 └── unit/
     └── test_prompt_manager.py
@@ -96,8 +96,11 @@ N/A.
 N/A (returns plain `str`).
 
 ## 19. Business Logic
-- Filename convention: `{name}_v{N}.md`, e.g. `sales_inquiry_v2.md`. `version` parameter passed to `get()` is the string after `_v` (i.e. `"2"`), or `"latest"` as a dev convenience resolved by scanning the directory for the highest `N`.
-- Each intent's prompt is a fully independent file — bumping `sales_inquiry_v2.md` to `sales_inquiry_v3.md` never touches `technical_support_v1.md`, satisfying the architecture's "editing one intent's prompt no longer risks silently editing another's."
+- `PromptManager.get(category, name, version)` resolves to `{PROMPT_LIBRARY_PATH}/{category}/{name}_v{version}.md` and returns the file's contents as a string. The `name` parameter may contain underscores; the file is resolved as `{name}_v{version}.md`. Example: `get('clarification', 'llm_rewrite_instructions', '1')` → `prompt_library/clarification/llm_rewrite_instructions_v1.md`.
+- `PromptManager.get_latest(category, name)` scans the directory for files matching `{name}_v*.md`, extracts the version integer from each filename using the pattern `_v(\d+)\.md`, and returns the content of the file with the **maximum integer** version. String sort is explicitly NOT used — it would incorrectly rank `v10` below `v9`.
+- Cache: prompts are cached in a module-level `dict[tuple, str]` after first load. The cache is populated at startup self-check time (see below) to fail fast on missing files.
+- All callers import `PromptManager` from `app.prompts.manager`. There is one module-level singleton instance: `prompt_manager = PromptManager(settings.prompts.library_path)`. Callers use `from app.prompts.manager import prompt_manager` — they do not instantiate `PromptManager` themselves.
+- `PROMPT_LIBRARY_PATH` is read from `settings.prompts.library_path` (env var `PROMPT_LIBRARY_PATH`, default `./prompt_library`).
 
 ## 20. Validation Rules
 - Every prompt file must be valid UTF-8 Markdown/plain text; loaded as-is (no templating engine required for v4.1 — RAG context injection and slot interpolation, if needed, are handled by the *caller* via simple `str.format`/f-string composition around the loaded base text, not inside this module).
@@ -114,11 +117,19 @@ N/A (returns plain `str`).
 - Log `PromptNotFoundError` at `ERROR` — this always indicates a code/library mismatch.
 
 ## 23. Unit Tests
-- `test_get_loads_and_caches_prompt`
-- `test_get_missing_prompt_raises`
-- `test_get_latest_resolves_highest_version`
-- `test_invalid_category_raises`
-- `test_startup_self_check_all_referenced_prompts_exist` — a small startup-time integration-style check (can live in unit tests since it's filesystem-only) that walks every `PromptRef` used in the codebase (Router, RAG, Tool Executor, Clarification) and asserts the corresponding file exists — catches the "referenced but not migrated" bug class the architecture calls out in Build Order step 7.
+- `test_get_returns_correct_prompt_for_version`
+- `test_get_latest_uses_integer_sort_not_string_sort` (assert `v10` > `v9`)
+- `test_get_missing_prompt_raises_prompt_not_found_error`
+- `test_startup_self_check_validates_all_referenced_prompts` — verifies all entries in the startup reference list exist on disk:
+  - `("system", "base", "1")`
+  - `("intent", "classify_intent", "1")`
+  - `("rag", "context_inject", "1")`
+  - `("rag", "filter_extract", "1")`
+  - `("clarification", "llm_rewrite_instructions", "1")`
+  - `("clarification", "escalation", "1")`
+  - `("tools", "tool_instructions", "1")`
+  - `("tools", "quote_explanation", "1")`
+- `test_startup_self_check_raises_on_missing_file` (assert boot fails if any file is absent) that walks every `PromptRef` used in the codebase (Router, RAG, Tool Executor, Clarification) and asserts the corresponding file exists — catches the "referenced but not migrated" bug class the architecture calls out in Build Order step 7.
 
 ## 24. Integration Tests
 - `test_prompt_manager_wired_into_router_produces_expected_system_message` — thin wiring check that Module 06 actually calls `PromptManager.get` rather than hardcoding prompt text inline.

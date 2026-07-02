@@ -15,7 +15,7 @@ to the Task Planner (Module 07) for *how* to satisfy it — the architecture's c
 "Router decides what, Planner decides how" separation.
 
 ## 4. Dependencies
-Module 03 (session/state), Module 04 (turns logging), Module 05 (LLM engine), Module 08 (Prompt Manager, for the system/intent prompts used in Tier 2).
+Module 03 (session/state — read Facts and ConversationState at turn start, write State at turn end), Module 04 (Turns — record each turn after execution), Module 05 (LLM — Tier 2 classification and intent confidence scoring), Module 07 (Planner — Orchestrator calls `TaskPlanner.build_plan`), Module 08 (Prompt Manager — system prompt and Tier 2 classification prompt), Module 09 (Feature Flags — resolved once per turn by the Orchestrator), Module 10 (Tool Executor — Orchestrator calls `ToolExecutor.execute_plan`), Module 13 (Clarification Flow — Orchestrator calls `ClarificationFlow.run` on low-confidence intents), Module 16 (MetricsRegistry — intent classification and confidence metrics emitted after Tier 2).
 
 ## 5. Folder Structure
 ```
@@ -57,26 +57,29 @@ tests/
 No new persisted tables (writes to `conversation_state`/`conversation_turns` owned by Modules 03/04).
 
 ## 10. Pydantic Schemas
-- `IntentResult { intent: str, confidence: float, source: Literal["tier1","tier2"], candidates: list[str] }`.
+- `IntentResult { intent: str, confidence: float, source: Literal["tier1","tier2"], candidates: list[str] = [], spec_question_detected: bool = False }` — `spec_question_detected` is populated by `Tier1RuleEngine.match` when the message contains a spec-like pattern (port count, dimensions, compatibility queries, detailed technical specifications). The Router sets this field; the Planner (Module 07) reads it from the `IntentResult` passed into `build_plan`.
 - `ClassifyIntentArguments { intent: str, confidence: float, candidates: list[str] }` — the shape the LLM tool call must produce (JSON-schema-constrained via Module 05's structured output).
-- `OrchestratorResult { assistant_message: str, intent: str, plan: dict, tool_calls: list[dict] }` — returned up to Module 15 (Public API) to become the HTTP response.
+- `OrchestratorResult { assistant_message: str, intent: str, awaiting_clarification: bool, plan: Plan | None, tool_calls: list[ToolExecutionResult] }` — uses typed references to `Plan` (Module 07) and `ToolExecutionResult` (Module 10). `plan` is `None` when the clarification flow ran instead of the Planner.
 
 ## 11. Repository Layer
 None new — uses `SessionStateService` (Module 03) and `TurnsService` (Module 04).
 
 ## 12. Service Layer
-- `Router.classify(session, message)`:
-  1. `tier1_result = Tier1RuleEngine.match(message)`; if confident, return immediately (`source="tier1"`).
-  2. Else `tier2_result = await Tier2Classifier.classify(...)` (bundled call, full conversation context, mandatory first tool call per architecture — unchanged from v4).
-  3. Return whichever fired.
-- `Orchestrator.on_turn(tenant_id, session_id, message)`:
-  1. Load Facts + Conversation State (Module 03).
-  2. `intent_result = await Router.classify(...)`.
-  3. Persist `intent_result` fields into Conversation State.
-  4. If `confidence >= CLASSIFICATION_CONFIDENCE_THRESHOLD`: build plan via Task Planner (Module 07), execute via Tool Executor (Module 10).
-  5. Else: hand off to Clarification flow (Module 13).
-  6. Record turn (Module 04) with everything gathered.
-  7. Return `OrchestratorResult`.
+`Orchestrator.on_turn(tenant_id, session_id, user_message) -> OrchestratorResult`:
+1. Load `facts, state = await SessionStateService.get(tenant_id, session_id)` from Module 03.
+2. Resolve `flags = await FeatureFlagsService.resolve(tenant_id)` from Module 09 — called once here; the resolved `FeatureFlags` object is passed to both Planner and Tool Executor.
+3. Route: `intent_result = Router.classify(user_message, facts, state)` (Tier 1 then Tier 2, see §8).
+4. Call `MetricsRegistry.increment_intent_classification(source=intent_result.source, intent=intent_result.intent)` and `MetricsRegistry.record_intent_confidence(intent_result.confidence)` from Module 16.
+5. Update `ConversationState` with the new intent and confidence (`ConversationStateRepository.upsert`).
+6. Compute `turn_number` by delegating to `TurnsService.get_next_turn_number(tenant_id, session_id)` (a single `SELECT COALESCE(MAX(turn_number),0)+1 ... FOR UPDATE` inside a transaction).
+7. Low-confidence branch: if `intent_result.confidence < settings.ollama.classification_confidence_threshold`, call `ClarificationFlow.run(tenant_id, session_id, intent_result, facts, state)` from Module 13 — wrap in `try/except MaxClarificationRoundsExceededError`; on catch, override `intent_result.intent = 'escalation_request'` and fall through to step 8.
+8. Build plan: `plan = TaskPlanner.build_plan(intent_result, facts, state, flags)` from Module 07.
+9. Execute plan: `tool_results = await ToolExecutor.execute_plan(plan, tenant_id, session_id, facts, state, flags)` from Module 10.
+10. Assemble `assistant_message`: if the clarification flow ran (not overridden), use `clarification_result.question_text`; if the plan executed, use the `result_summary` from the `respond` step in `tool_results`.
+11. Record turn: `await TurnsService.record_turn(tenant_id, session_id, turn_number, user_message, intent_result, plan, tool_results, assistant_message)` from Module 04.
+12. Return `OrchestratorResult(assistant_message=..., intent=intent_result.intent, awaiting_clarification=clarification_ran, plan=plan, tool_calls=tool_results)`.
+
+Clarification branch return path: when `ClarificationFlow.run` is called (not via the `MaxClarificationRoundsExceededError` catch), set `result.awaiting_clarification = True`, `result.assistant_message = clarification_result.question_text`, `result.plan = None`, `result.tool_calls = []`. Record the turn and return.
 
 ## 13. Internal Interfaces
 - `Router.classify(session, message) -> IntentResult` — sole entrypoint used by the Orchestrator; Tier1/Tier2 internals are not called directly by anything else.

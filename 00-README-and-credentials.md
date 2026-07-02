@@ -22,7 +22,7 @@ committed — add `.env` to `.gitignore` on day one).
 | `QDRANT_API_KEY` | RAG Engine (M11) | Qdrant Cloud console → API Keys | Yes |
 | `REDIS_URL` | Session/State (M03), Rate limiting (M15) | Local Redis (Docker or native install), e.g. `redis://localhost:6379/0` | Yes |
 | `OLLAMA_HOST` | LLM Engine (M05) | Local Ollama install, default `http://localhost:11434` | Yes |
-| `OLLAMA_MODEL` | LLM Engine (M05) | Pulled locally: `ollama pull qwen3:8b-instruct` | Yes |
+| `OLLAMA_MODEL` | LLM Engine (M05) | Pulled locally: `ollama pull qwen3:4b` | Yes |
 | `RESEND_API_KEY` | Email Notifications (M14) | resend.com → API Keys | Yes (for lead/quote email notifications) |
 | `RESEND_FROM_EMAIL` | Email Notifications (M14) | A domain verified in Resend | Yes |
 | `CRM_API_BASE_URL` | CRM Integration (M14) | Your CRM provider's API docs | Yes (stub/mock acceptable for local dev) |
@@ -57,7 +57,7 @@ REDIS_URL=redis://localhost:6379/0
 
 # --- LLM ---
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen3:8b-instruct
+OLLAMA_MODEL=qwen3:4b
 
 # --- Embeddings ---
 EMBEDDING_MODEL=BAAI/bge-m3

@@ -1,0 +1,322 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows, positioning, calc}
+
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codeblue}{rgb}{0.1,0.1,0.6}
+\definecolor{codegreen}{rgb}{0.1,0.5,0.1}
+
+\lstset{
+    backgroundcolor=\color{codegray},
+    basicstyle=\small\ttfamily,
+    keywordstyle=\color{codeblue}\bfseries,
+    commentstyle=\color{codegreen},
+    stringstyle=\color{red!70!black},
+    breaklines=true,
+    frame=single,
+    captionpos=b,
+    language=Python
+}
+
+\tikzset{
+    startstop/.style={rectangle, rounded corners, minimum width=3cm, minimum height=0.8cm, text centered, draw=blue!80!black, fill=blue!10, thick},
+    process/.style={rectangle, minimum width=3.2cm, minimum height=0.8cm, text centered, draw=orange!80!black, fill=orange!10, thick},
+    decision/.style={diamond, aspect=2, minimum width=2.5cm, minimum height=0.8cm, text centered, draw=green!60!black, fill=green!10, thick},
+    database/.style={cylinder, shape border rotate=90, minimum width=2cm, minimum height=1.5cm, text centered, draw=purple!80!black, fill=purple!10, thick},
+    arrow/.style={thick,->,>=stealth}
+}
+
+\title{\textbf{Architectural \& Implementation Blueprint \\ AI Sales Engineer (v4.1) Chatbot System}}
+\author{Lead Architect \& Technical Lead}
+\date{July 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introduction \& Core Philosophy}
+
+The **AI Sales Engineer** is a highly structured, localized, and multi-tenant conversational agent designed to interface with users seeking product information, technical specifications, and purchase quotes. The system operates on three non-negotiable architectural pillars:
+
+\begin{itemize}
+    \item \textbf{FastAPI is the Brain:} The LLM (Ollama running Qwen3) is treated strictly as an ephemeral translation, classification, and extraction layer. It is never allowed to execute business code, direct control flow, or make database commits directly. All routing, planning, and execution logic are handled deterministically in Python.
+    \item \textbf{LLM Explains, Never Decides:} Doling out price calculations or determining CRM lead status is too critical to trust to stochastic LLM inference. Pricing logic is run deterministically in Python via SQL; the LLM merely translates the final numbers back to natural language.
+    \item \textbf{Plan-Constrained Security:} A declarative security policy gates every business tool. The planner produces steps, but the Security Policy Registry enforces execution permissions dynamically based on the validated session facts.
+\end{itemize}
+
+---
+
+\section{Request Lifecycle \& System Flowchart}
+
+When a user submits a chat message to the widget, the request traverses the system through a synchronous orchestrator thread. The flow below maps this lifecycle:
+
+\begin{figure}[h]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tikzpicture}[nodeDistance=1.5cm, auto]
+    % Nodes
+    \node (user) [startstop] {User Message};
+    \node (widget) [process, right=of user] {React Frontend (M17)};
+    \node (api) [process, right=of widget] {POST /chat (M15)};
+    \node (orch) [process, below=of api] {Orchestrator (M06)};
+    \node (db_state) [database, right=of orch] {DB State (M03)};
+    \node (router) [process, below=of orch] {Hybrid Router (M06)};
+    \node (confidence) [decision, below=of router] {Confidence $\ge 0.7$?};
+    \node (clarify) [process, left=of confidence, xshift=-1cm] {Clarification Flow (M13)};
+    \node (planner) [process, below=of confidence, yshift=-0.5cm] {Task Planner (M07)};
+    \node (executor) [process, below=of planner] {Tool Executor (M10)};
+    \node (policy) [decision, below=of executor] {Gated by Policy?};
+    \node (run_tool) [process, right=of policy, xshift=1cm] {Run Tools (M11, M12, M14)};
+    \node (abort) [process, left=of policy, xshift=-1cm] {Abort / Redact Step};
+    \node (respond) [process, below=of policy, yshift=-0.8cm] {Built-in Respond Tool (M10/M05)};
+    \node (turns) [process, left=of respond, xshift=-2cm] {Turns Logging (M04)};
+    
+    % Connections
+    \draw [arrow] (user) -- (widget);
+    \draw [arrow] (widget) -- (api);
+    \draw [arrow] (api) -- (orch);
+    \draw [arrow] (orch) -- (db_state);
+    \draw [arrow] (orch) -- (router);
+    \draw [arrow] (router) -- (confidence);
+    \draw [arrow] (confidence) -- node [above] {No} (clarify);
+    \draw [arrow] (confidence) -- node [right] {Yes} (planner);
+    \draw [arrow] (planner) -- (executor);
+    \draw [arrow] (executor) -- (policy);
+    \draw [arrow] (policy) -- node [above] {Yes} (run_tool);
+    \draw [arrow] (policy) -- node [above] {No} (abort);
+    \draw [arrow] (run_tool) |- (respond);
+    \draw [arrow] (abort) |- (respond);
+    \draw [arrow] (respond) -- (turns);
+    \draw [arrow] (turns) |- (orch);
+    \draw [arrow] (clarify) |- (turns);
+\end{tikzpicture}
+}
+\caption{End-to-End Conversation Request Lifecycle}
+\end{figure}
+
+\newpage
+
+\section{Module-by-Module Deep Dive}
+
+Here we outline the technical blueprint for the 17 modules comprising the system:
+
+\subsection{M01 — Foundation \& Configuration}
+Manages startup, typed global settings via Pydantic \texttt{BaseSettings}, and exception mappings.
+\begin{itemize}
+    \item \textbf{CORS Configuration:} Registers \texttt{CORSMiddleware} with allowed origins driven by the \texttt{CORS_ALLOW_ORIGINS} environment variable to enable cross-origin requests in local dev (port 5173 to 8000).
+    \item \textbf{Lifespan Hooks:} Exposes \texttt{register_lifecycle_hooks(app, settings)} which executes registered startup and shutdown procedures across all database, Redis, and scheduler worker threads.
+    \item \textbf{Error Handling:} Implements \texttt{MissingConfigurationError(AppError)} which aborts boot if environment keys are missing, listing all missing variables at once.
+\end{itemize}
+
+\subsection{M02 — Database \& Cache Layer}
+Establishes SQLAlchemy async engine, Alembic migrations, and Redis client singletons.
+\begin{itemize}
+    \item \textbf{Lifespan Teardown:} Hook executes \texttt{await engine.dispose()} and \texttt{await redis.aclose()} on server shutdown.
+    \item \textbf{Key Formatting Contract:} UUID parameters in Redis keys must use the lowercase hyphenated format (\texttt{str(uuid)}), e.g., \texttt{facts:00000000-0000-0000-0000-000000000001:session_123}.
+\end{itemize}
+
+\subsection{M03 — Session \& State Management}
+Handles the persistence of \texttt{SessionFacts} and \texttt{ConversationState}.
+\begin{itemize}
+    \item \textbf{Schema Updates:} \texttt{session_facts} now includes \texttt{quantity (INTEGER)}, \texttt{contact_name (TEXT)}, \texttt{contact_email (TEXT)}, and \texttt{contact_phone (TEXT)}.
+    \item \textbf{State Updates:} \texttt{conversation_state} now includes \texttt{spec_question_detected (BOOLEAN)} and \texttt{contact_info_captured (BOOLEAN)}.
+    \item \textbf{Atomicity:} Clarification rounds are incremented using a single, atomic SQL statement:
+    \begin{lstlisting}[language=SQL]
+    UPDATE conversation_state 
+    SET clarification_rounds = clarification_rounds + 1 
+    WHERE tenant_id = :t AND session_id = :s;
+    \end{lstlisting}
+\end{itemize}
+
+\subsection{M04 — Conversation Turns \& Logging}
+Logs every input, output, and execution trace to PostgreSQL in an append-only audit trail.
+\begin{itemize}
+    \item \textbf{Race Mitigation:} The Orchestrator resolves sequential turn numbering via a locked database aggregate query:
+    \begin{lstlisting}[language=SQL]
+    SELECT COALESCE(MAX(turn_number), 0) + 1 
+    FROM conversation_turns 
+    WHERE tenant_id = :t AND session_id = :s FOR UPDATE;
+    \end{lstlisting}
+    \item \textbf{Unique Constraint:} Enforces alignment via a \texttt{uidx_turns_session_number} unique database constraint.
+\end{itemize}
+
+\subsection{M05 — LLM Engine}
+Interfaces with the local Ollama process using a structured, mockable interface.
+\begin{itemize}
+    \item \textbf{structural Decoupling:} Defines \texttt{LLMClientProtocol} PEP 544 interface. All downstream orchestrator operations type-hint against this protocol rather than importing the concrete client class directly.
+    \item \textbf{Context Builder:} Defines \texttt{build_llm_messages(session, history) -> tuple[list[ChatMessage], ContextBuildMetadata]} inside \texttt{app/llm/context.py} to handle context truncation and formatting consistently across the app.
+\end{itemize}
+
+\subsection{M06 — Router \& Hybrid Intent Classification}
+Physical segregation separates classification from overall orchestration.
+\begin{itemize}
+    \item \textbf{Module Separation:} Router files live in \texttt{app/router/}, while the orchestrator core resides in \texttt{app/orchestrator/orchestrator.py}.
+    \item \textbf{Shared Context:} \texttt{IntentResult} and \texttt{ClassifyIntentArguments} are placed in \texttt{app/shared/intent_context.py} to ensure no circular import loop exists when the planner (M07) reads intent data.
+\end{itemize}
+
+\subsection{M07 — Task Planner}
+Synchronously resolves intent, facts, and features into a pipeline list of executable steps.
+\begin{itemize}
+    \item \textbf{Business Decoupling:} Decoupled from Quotes (M12) by importing the predicate validator \texttt{quote_slots_complete} from the shared schema module \texttt{app/shared/quote_contract.py}.
+\end{itemize}
+
+\subsection{M08 — Prompt Manager}
+Resolves and caches filesystem-based Markdown prompts using the PEP 544 \texttt{PromptProvider} protocol.
+
+\subsection{M09 — Feature Flags}
+Resolves runtime flags overrides with an in-process \texttt{cachetools.TTLCache} (60s).
+
+\subsection{M10 — Security Policy Registry \& Tool Executor}
+Enforces slot-completeness predicates and plan constraints before dispatching execution to registered tools.
+\begin{itemize}
+    \item \textbf{Dependency Inversion:} Features register their tools dynamically using \texttt{ToolRegistry.register(name, callback)} at startup. The Executor contains no imports of concrete feature services.
+    \item \textbf{Typed Execution Context:} Exposes typed attributes representing tool execution results:
+    \begin{lstlisting}
+    class ExecutionContext(BaseModel):
+        retrieve_products: ToolExecutionResult | None = None
+        retrieve_docs: ToolExecutionResult | None = None
+        generate_quote: ToolExecutionResult | None = None
+        create_lead: ToolExecutionResult | None = None
+        create_ticket: ToolExecutionResult | None = None
+    \end{lstlisting}
+\end{itemize}
+
+\subsection{M11 — RAG Engine}
+Retrieves product specs and context files by combining SQL narrowing with Qdrant vector search.
+
+\subsection{M12 — Quote Builder}
+SQL-driven calculation that builds line items.
+\begin{itemize}
+    \item \textbf{Narration:} The LLM is invoked through `QuoteExplainer.explain` strictly to generate a natural language summary of the final numbers, using `LLMClientProtocol`.
+\end{itemize}
+
+\subsection{M13 — Clarification Template Library}
+Matches candidate combinations to predefined bullet questions, validating post-hoc that the option set is unaltered.
+
+\subsection{M14 — CRM Integration \& Email Notifications}
+Enqueues CRM updates in a Postgres retry queue with exponential backoff using \texttt{AsyncIOScheduler} and sends notifications via Resend.
+
+\subsection{M15 — Public API \& Widget Session}
+Handles API-key authentication, session cookies, rate-limiting, and type compilation.
+\begin{itemize}
+    \item \textbf{Type Compilation:} A script at \texttt{scripts/generate_typescript_types.py} parses Pydantic models to output TypeScript definitions, preventing frontend-backend drift.
+\end{itemize}
+
+\subsection{M16 — Observability}
+Exposes aggregated prometheus metrics and structured readiness health checks.
+
+\subsection{M17 — Frontend Application}
+React chat widget consuming compile-generated TS interfaces and using optimistic rollback states.
+
+---
+
+\section{Interactive Operations Matrix}
+
+The table below indicates the cross-module dependency flow, indicating who owns the data structures versus who consumes them:
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+\textbf{Data Structure / Predicate} & \textbf{Physical Owner} & \textbf{Consumers} & \textbf{Decoupling Pattern} \\
+\midrule
+\texttt{IntentResult} & \texttt{app.shared.intent_context} & M06, M07, M10 & Shared Context module \\
+\texttt{quote_slots_complete} & \texttt{app.shared.quote_contract} & M07, M10, M12 & Shared Contract module \\
+\texttt{LLMClientProtocol} & \texttt{app.llm} & M06, M12, M13 & PEP 544 structural interface \\
+\texttt{PromptProvider} & \texttt{app.prompts} & M06, M10, M12 & PEP 544 structural interface \\
+\texttt{ToolRegistration} & Individual Modules & M10 (Executor) & Dynamic push registration \\
+\texttt{TypesScript Types} & \texttt{scripts/typegen.py} & M17 (React App) & Automatic schema compilation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+---
+
+\section{Operational Walkthroughs: How the System Works Under the Hood}
+
+To understand how the system functions dynamically, we walk through four canonical conversation scenarios.
+
+\subsection{Scenario A: Product Discovery \& Specifications Lookup}
+\textbf{User Query:} \textit{"Do you have a 48-port Cisco PoE switch?"}
+
+\begin{enumerate}
+    \item \textbf{Ingress (M15):} The widget sends the message to \texttt{POST /chat} with the session cookie.
+    \item \textbf{Orchestration (M06):} The orchestrator loads the session context from Postgres/Redis (M03) and invokes the hybrid Router (M06).
+    \item \textbf{Intent Classification (M06):} 
+    \begin{itemize}
+        \item \textbf{Tier 1 passes:} The regex rules engine scans the query. It flags a spec inquiry pattern (\texttt{48-port}, \texttt{PoE}, \texttt{switch}) and marks \texttt{spec_question_detected = True}.
+        \item \textbf{Tier 2 passes (LLM):} If Tier 1 matches ambiguously, the LLM client is invoked via \texttt{LLMClientProtocol} using prompt parameters from \texttt{PromptProvider}. The LLM returns a structured JSON classification: \texttt{\{intent: "sales_inquiry", confidence: 0.95\}}.
+    \end{itemize}
+    \item \textbf{Planning (M07):} The task planner is called with the resolved intent. Because \texttt{spec_question_detected == True}, the planner dynamically builds a plan containing:
+    \texttt{['retrieve_products', 'retrieve_docs', 'respond']}.
+    \item \textbf{Execution (M10):} The Tool Executor iterates over the plan steps:
+    \begin{itemize}
+        \item \textbf{Step 1 (\texttt{retrieve_products}):} The RAG engine (M11) parses keyword attributes (\texttt{brand="Cisco"}, \texttt{port_count=48}) to filter SQL tables, executes BGE-M3 text embedding, and performs vector similarity search in Qdrant restricted to that narrow SQL candidate pool. The results (matching product IDs) are stored in the typed \texttt{ExecutionContext.retrieve_products} slot.
+        \item \textbf{Step 2 (\texttt{retrieve_docs}):} The RAG engine checks the execution context, finds the matched product IDs, and queries the Qdrant document vector index scoped to those IDs to pull detailed technical data sheet chunks.
+        \item \textbf{Step 3 (\texttt{respond}):} The built-in respond tool formats the retrieved chunks, merges them with the conversation history, and calls the LLM via \texttt{LLMClientProtocol} to render a detailed assistant response explaining the product specs.
+    \end{itemize}
+    \item \textbf{Logging (M04):} The orchestrator increments the turn number, logs the final trace to \texttt{conversation_turns}, and returns the message to the client.
+\end{enumerate}
+
+\subsection{Scenario B: Deterministic Quote Generation}
+\textbf{User Query:} \textit{"Generate a quote for 10 units for Acme Corp"}
+
+\begin{enumerate}
+    \item \textbf{Orchestration \& Routing (M06):} Classified as \texttt{quote_request}.
+    \item \textbf{Planning (M07):} The planner checks the feature flag \texttt{flags.enable_quotes} and the shared slot check predicate \texttt{quote_slots_complete(facts)}. 
+    \begin{itemize}
+        \item If facts are incomplete, the planner returns \texttt{['request_missing_slots']}.
+        \item If facts are complete (having captured company, quantity, budget, and product interest from context), the planner returns \texttt{['retrieve_products', 'generate_quote', 'respond']}.
+    \end{itemize}
+    \item \textbf{Execution (M10):}
+    \begin{itemize}
+        \item \textbf{Step 1 (\texttt{retrieve_products}):} Retrieves the targeted product IDs.
+        \item \textbf{Step 2 (\texttt{generate_quote}):} Gated by the security policy (requires \texttt{allowed_intents: [quote_request]} and verified slots). The Quote Builder (M12) pulls pricing rows directly from the \texttt{product_pricing} Postgres table. It multiplies the unit price by 10 deterministically in Python (no LLM math) and creates a row in the \texttt{quotes} table. 
+        \item \textbf{Asynchronous Hook (M14):} Quote Builder dispatches a fire-and-forget task to \texttt{NotificationService.notify_quote_generated} to send a copy to the sales desk via Resend.
+        \item \textbf{Step 3 (\texttt{respond}):} The LLM is given the completed quote details and asked strictly to narrate the results in a user-friendly format (never calculating values itself).
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Scenario C: CRM Lead Capture \& Asynchronous Sync}
+\textbf{User Query:} \textit{"I want to buy. My email is user@acme.com"}
+
+\begin{enumerate}
+    \item \textbf{Orchestration \& Routing (M06):} The Router classifies the intent as \texttt{sales_inquiry} and extracts the contact email into the \texttt{session_facts} table (M03), marking \texttt{contact_info_captured = True} on the state.
+    \item \textbf{Planning (M07):} The planner evaluates the rules. Since \texttt{contact_info_newly_captured == True} and CRM sync is enabled, it appends the \texttt{create_lead} step, generating the plan: \texttt{['create_lead', 'respond']}.
+    \item \textbf{Execution (M10):}
+    \begin{itemize}
+        \item \textbf{Step 1 (\texttt{create_lead}):} The Lead Service (M14) validates the email format, writes a lead record in the local database with \texttt{crm_synced = False}, and immediately inserts a job entry in the local \texttt{retry_queue} table.
+        \item \textbf{Step 2 (\texttt{respond}):} The assistant replies to the user confirming the contact information has been registered. The HTTP turn completes immediately without blocking the user on external network latency.
+    \end{itemize}
+    \item \textbf{Background Worker Sync (M14):} Separately, every 60 seconds, the \texttt{AsyncIOScheduler} worker triggers \texttt{RetryWorker.run()}. The worker queries pending queue jobs using \texttt{FOR UPDATE SKIP LOCKED} to prevent duplication, posts the lead details to the external CRM API, marks the Postgres lead row as synced, and updates the retry queue status. If the CRM is down, it schedules a retry using exponential backoff (\texttt{2^attempt} minutes).
+\end{enumerate}
+
+\subsection{Scenario D: Ambiguous User Query Gated by Confidence}
+\textbf{User Query:} \textit{"Help"}
+
+\begin{enumerate}
+    \item \textbf{Orchestration (M06):} The hybrid Router (M06) runs the message. Deterministic checks fall through; the LLM classifies intent but returns a low confidence score: \texttt{confidence = 0.45}.
+    \item \textbf{Clarification Gating (M06/M13):} Because confidence is below the threshold (\texttt{0.7}), the orchestrator aborts the planning stage and routes the request directly to the Clarification Flow (M13).
+    \item \textbf{Lookup \& Validation (M13):}
+    \begin{itemize}
+        \item The system evaluates the candidate classification list: \texttt{\{sales_inquiry, technical_support\}}.
+        \item Matches this set to the template name: \texttt{sales_vs_support}.
+        \item Pulls the Markdown text template from the Prompt Manager.
+        \item If the LLM rewrite flag is enabled, it asks the LLM client to rephrase the request to match the chat history, verifying post-hoc that all option bullet text items are unchanged.
+    \end{itemize}
+    \item \textbf{Turn Logging \& Response (M04):} The system increments the turn's \texttt{clarification_rounds} count atomically and returns the template options to the user as clickable chips in the React UI (M17).
+\end{enumerate}
+
+\end{document}

@@ -4,7 +4,7 @@
 `llm_engine` — Local Ollama client wrapper, tool-calling loop primitives, structured-output parsing.
 
 ## 2. Goal
-Provide a single, typed interface over the local Ollama `qwen3:8b-instruct` model
+Provide a single, typed interface over the local Ollama `qwen3:4b` model
 supporting tool calling and structured (JSON-schema-constrained) outputs, used by
 every module that needs an LLM call (Router's Tier 2, RAG explanation, Quote
 explanation, optional Clarification rewrite).
@@ -136,7 +136,7 @@ N/A (Python-level interface, not HTTP-exposed).
 - `test_tool_schema_builder_produces_valid_ollama_format`
 
 ## 24. Integration Tests
-- `test_chat_roundtrip_against_local_ollama` (requires local Ollama with `qwen3:8b-instruct` pulled; skipped/marked if unavailable)
+- `test_chat_roundtrip_against_local_ollama` (requires local Ollama with `qwen3:4b` pulled; skipped/marked if unavailable)
 - `test_tool_calling_roundtrip_returns_tool_calls`
 - `test_timeout_raises_llm_timeout_error` (simulate with a very low timeout override)
 

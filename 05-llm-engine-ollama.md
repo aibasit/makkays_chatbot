@@ -26,6 +26,7 @@ app/
 │   ├── client.py
 │   ├── schemas.py
 │   ├── tool_schema.py
+│   ├── context.py
 │   └── exceptions.py
 tests/
 ├── unit/
@@ -35,7 +36,7 @@ tests/
 ```
 
 ## 6. Files to Create
-`client.py`, `schemas.py`, `tool_schema.py`, `exceptions.py`.
+`client.py`, `schemas.py`, `tool_schema.py`, `context.py`, `exceptions.py`.
 
 ## 7. Responsibility of Every File
 | File | Responsibility |
@@ -43,13 +44,28 @@ tests/
 | `client.py` | `OllamaClient` — thin async wrapper over Ollama's `/api/chat` endpoint with tool-calling and JSON-mode support |
 | `schemas.py` | `ChatMessage`, `ToolCall`, `ToolResult`, `LLMResponse` Pydantic models |
 | `tool_schema.py` | Helpers to build the JSON tool-schema payload Ollama expects from a Python function signature/description registry |
+| `context.py` | Canonical `build_llm_messages(...)` helper shared by Router, respond, Quote Explainer, RAG response composition, and Clarification rewrite |
 | `exceptions.py` | `LLMTimeoutError`, `LLMMalformedOutputError`, `LLMUnavailableError` |
 
 ## 8. Classes
-- `OllamaClient` — `async chat(messages, tools=None, response_format=None, temperature=0.0) -> LLMResponse`.
+- `LLMClientProtocol(Protocol)` — PEP 544 structural protocol defining the standard async interface for LLM client operations:
+  ```python
+  class LLMClientProtocol(Protocol):
+      async def chat(
+          self,
+          messages: list[ChatMessage],
+          tools: list[dict] | None = None,
+          response_format: dict | None = None,
+          temperature: float = 0.0
+      ) -> LLMResponse:
+          ...
+  ```
+  All callers (Router, Quote Explainer, Clarification Rewrite, built-in tools) type-hint against `LLMClientProtocol` rather than referencing `OllamaClient` directly.
+- `OllamaClient` — concrete class implementing `LLMClientProtocol`. Exposes `async chat(messages, tools=None, response_format=None, temperature=0.0) -> LLMResponse`.
 - `ChatMessage { role: Literal["system","user","assistant","tool"], content: str, tool_call_id: str | None }`.
 - `ToolCall { id: str, name: str, arguments: dict }`.
 - `LLMResponse { content: str | None, tool_calls: list[ToolCall], raw: dict }`.
+- `ContextBuildMetadata { included_turn_count: int, included_source_ids: list[str], truncated_turn_count: int, truncated_source_count: int, prompt_refs: dict[str, str] }`.
 
 ## 9. Data Models
 No persistence — this module is a stateless outbound-call wrapper.
@@ -66,8 +82,10 @@ N/A — no persistence.
 `OllamaClient` itself functions as the service boundary; no separate service layer needed since this module has a single external dependency (Ollama) and no business decisions of its own.
 
 ## 13. Internal Interfaces
-- `async chat(messages, tools, response_format, temperature) -> LLMResponse` — the **only** method other modules call.
+- `LLMClientProtocol` (above) — structural protocol defining the standard async interface for LLM operations. Exported from `app/llm/__init__.py`.
+- `async chat(messages, tools, response_format, temperature) -> LLMResponse` — concrete Ollama implementation.
 - `build_tool_schema(name, description, parameters: dict) -> dict` — used by Module 10 (Tool Executor) to register tool schemas that get passed into `chat(tools=...)`.
+- `build_llm_messages(...) -> tuple[list[ChatMessage], ContextBuildMetadata]` — canonical context assembly helper defined in Module 00 §7. Every LLM caller uses this helper before calling `OllamaClient.chat`; callers do not hand-roll message ordering, truncation, or source formatting.
 - Timeout enforced via `asyncio.wait_for` wrapping the HTTP call — default value read from `settings.ollama.timeout_seconds` (env var `OLLAMA_TIMEOUT_SECONDS`, default `30`).
 - HTTP transport: `httpx.AsyncClient` with a shared instance created once at module level (not per-call). Configure with `timeout=httpx.Timeout(connect=5.0, read=settings.ollama.timeout_seconds, write=5.0, pool=2.0)`. The client is closed in the app's shutdown lifespan hook (Module 01 §19).
 - Ollama request shapes (both use `stream: false`):
@@ -173,3 +191,8 @@ Caller builds `messages` (using Prompt Manager, Module 08) → `OllamaClient.cha
 - [ ] Timeout and unavailability produce distinct, catchable exceptions
 - [ ] No prompt/response content logged at this layer (only at the caller/turns layer)
 - [ ] Tests above pass
+
+## 33. Hardening Update: Context Assembly and Tool-Calling Scope
+The canonical Context Builder contract is Module 00 §7 and is implemented in this module as `app/llm/context.py`. Router, FactsExtractor, Clarification rewrite, Quote Explainer, and the built-in `respond` tool must call `build_llm_messages` before invoking `OllamaClient.chat`.
+
+Tool calling in Module 05 is a transport capability only. It does not mean the LLM decides business tool execution. Business tools are emitted by Module 07 Planner and executed deterministically by Module 10 after policy checks. The `classify_intent` and `extract_facts` structured calls are classification/extraction contracts owned by Module 06, not executable business tools.

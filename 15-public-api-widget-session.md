@@ -73,7 +73,7 @@ None new beyond the small helper classes in §8 — business logic lives entirel
 2. `require_site_api_key` dependency: reads `X-Site-Api-Key` header, compares to `settings.site.site_api_key` using `hmac.compare_digest` (constant-time). Raises `HTTPException(status_code=401)` on mismatch or absence.
 3. `session_id = SessionCookieManager.get_or_create(request, response)`: reads cookie `settings.site.session_cookie_name`. If absent or not a valid UUID4 string, generates `str(uuid4())`, sets response cookie `HttpOnly=True, SameSite='Lax', Secure=False, max_age=86400` (24 hours). Returns the session_id string in either case.
 4. `tenant_id = UUID(settings.db.default_tenant_id)` — injected at this layer; the Orchestrator and all downstream modules receive a typed `UUID`, never the raw string.
-5. `ChatRateLimiter.check(tenant_id, session_id)`: issues Redis `INCR ratelimit:chat:{tenant_id}:{session_id}`; if return value == 1, immediately pipeline `EXPIRE ratelimit:chat:{tenant_id}:{session_id} 60`; if counter exceeds `settings.site.chat_rate_limit_per_minute`, raise `HTTPException(status_code=429, detail={"code": "rate_limited"})`.
+5. `ChatRateLimiter.check(tenant_id, session_id)`: issues Redis `INCR rate_limit:chat:{tenant_id}:{session_id}`; if return value == 1, immediately pipeline `EXPIRE rate_limit:chat:{tenant_id}:{session_id} 60`; if counter exceeds `settings.site.chat_rate_limit_per_minute`, raise `HTTPException(status_code=429, detail={"code": "rate_limited"})`.
 6. Validate `chat_request.message.strip()` non-empty, len `<= settings.site.max_message_length` — raise 422 via Pydantic if either fails.
 7. `result = await orchestrator.on_turn(tenant_id, session_id, chat_request.message.strip())`.
 8. Return `ChatResponse(assistant_message=result.assistant_message, intent=result.intent, awaiting_clarification=result.awaiting_clarification)` with the session cookie set on the response.
@@ -84,7 +84,7 @@ None new.
 ## 15. Redis Keys
 | Key Pattern | TTL | Purpose |
 |---|---|---|
-| `ratelimit:chat:{tenant_id}:{session_id}` | 60s window | Caps `/chat` calls per session (e.g., 20/min) — distinct from Module 10's per-tool limits, this is the outer request-level guard |
+| `rate_limit:chat:{tenant_id}:{session_id}` | 60s window | Caps `/chat` calls per session (e.g., 20/min) — distinct from Module 10's per-tool limits, this is the outer request-level guard |
 
 ## 16. API Endpoints
 | Method | Path | Purpose | Owner |
@@ -103,6 +103,7 @@ Note: `GET /health` is owned by Module 01. `GET /metrics` and `GET /ready` are o
 - **Session cookie**: `HttpOnly`, `SameSite=Lax`, `Secure=False` for local dev (documented explicitly as a local-dev setting — production cookie hardening is a deployment concern, out of scope). Cookie name: `sales_engineer_session_id`. If absent, a new UUID4 is generated and set on the response.
 - **Site API key**: for local dev, a single static key from `.env` (`SITE_API_KEY`), checked via header equality — intentionally simple; production-grade key rotation/per-client keys are out of scope per the local-dev-only instruction.
 - **Tenant resolution**: `DEFAULT_TENANT_ID` (Module 00) used for every request in v4.1 — no per-request tenant resolution logic yet (multi-tenancy is foundational-only per architecture §2.16).
+- **TypeScript Contract Generation**: To prevent API response/request drift between the FastAPI backend and React frontend, a CLI script is created at **`scripts/generate_typescript_types.py`**. The script uses the `pydantic2ts` tool (or Python introspection of Pydantic models) to parse `ChatRequest`, `ChatResponse`, and associated schemas, generating the frontend typed file **`frontend/src/types/chat.ts`** automatically on any backend schema edit. Run as `python scripts/generate_typescript_types.py`.
 
 ## 20. Validation Rules
 - `message`, after `.strip()`, must be non-empty — 422 `{"detail": [{"loc": ["body", "message"], "msg": "message is empty"}]}`.
@@ -151,7 +152,7 @@ site:
 ```
 
 ## 26. Environment Variables
-`SITE_API_KEY` (already defined in Module 00).
+`SITE_API_KEY`, `CHAT_RATE_LIMIT_PER_MINUTE`, `MAX_MESSAGE_LENGTH` (defined in Module 00).
 
 ## 27. Sequence Diagram
 ```
@@ -191,3 +192,6 @@ Frontend → `POST /chat` → auth/session/rate-limit checks → `Orchestrator.o
 - [ ] Rate limiting enforced independently of Module 10's per-tool limits
 - [ ] `ChatResponse` never leaks internal fields (plan, tool_calls, raw prompt text)
 - [ ] Tests above pass
+
+## 33. Hardening Update: Correlation and Request Lifecycle
+Module 15 creates or accepts a `correlation_id` per HTTP request and makes it available to downstream structured logs. The canonical end-to-end request lifecycle is Module 00 §13; this module owns only authentication, session cookie, request-level rate limiting, request validation, latency measurement, and HTTP response mapping. Redis key names are authoritative in Module 00 §9.

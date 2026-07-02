@@ -167,3 +167,6 @@ In-process, resolved once near the start of `Orchestrator.on_turn`, threaded thr
 - [ ] Planner and Tool Executor both consult flags independently (defense in depth)
 - [ ] DB failure never blocks a turn (falls back to env)
 - [ ] Tests above pass
+
+## 33. Hardening Update: Canonical Registry References
+Feature flag env defaults are declared only in Module 01 Settings and listed in Module 00 §10. Module 09 owns the optional `feature_flags` table listed in Module 00 §11. There is no Redis feature-flag key in v4.1; the in-process TTL cache is internal to `FeatureFlagsService` and must not be referenced by other modules.

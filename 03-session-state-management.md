@@ -90,9 +90,9 @@ tests/
 
 ## 12. Service Layer
 `SessionStateService`:
-- `async get_facts(tenant_id, session_id) -> FactsSchema` — Redis `GET facts:{tenant_id}:{session_id}` → on miss, `FactsRepository.get` → repopulate Redis (no TTL — Facts are durable) → return.
+- `async get_facts(tenant_id, session_id) -> FactsSchema` — Redis `GET session:facts:{tenant_id}:{session_id}` → on miss, `FactsRepository.get` → repopulate Redis (no TTL — Facts are durable) → return.
 - `async update_facts(tenant_id, session_id, patch) -> FactsSchema` — write Redis, then `FactsRepository.upsert` (write-through, not write-behind, to avoid losing a Fact on process crash between the two writes — SQL write is the durability guarantee).
-- `async get_conversation_state(...) -> ConversationStateSchema` — Redis `GET conv:{tenant_id}:{session_id}` (30-min TTL) → on miss, `ConversationStateRepository.get` → repopulate Redis with TTL → return.
+- `async get_conversation_state(...) -> ConversationStateSchema` — Redis `GET conversation:state:{tenant_id}:{session_id}` (`settings.session.conversation_state_ttl_seconds`) → on miss, `ConversationStateRepository.get` → repopulate Redis with TTL → return.
 - `async update_conversation_state(...) -> ConversationStateSchema` — same write-through pattern, TTL re-applied on every write.
 - `async reset_conversation_state(tenant_id, session_id)` — clears `awaiting_clarification`, `clarification_candidates`, `current_plan`, `current_plan_step`; **does not touch Facts**.
 
@@ -138,8 +138,8 @@ CREATE TABLE conversation_state (
 ## 15. Redis Keys
 | Key Pattern | TTL | Contents |
 |---|---|---|
-| `facts:{tenant_id}:{session_id}` | None (durable, no expiry — checkpointed to SQL on every write) | JSON-serialized `FactsSchema` via `schema.model_dump_json()` (Pydantic v2). Deserialized with `FactsSchema.model_validate_json(raw)`. UUID and Decimal fields round-trip correctly with this method. |
-| `conv:{tenant_id}:{session_id}` | 30 min (reset on every write, matching v3 inactivity TTL) | JSON-serialized `ConversationStateSchema` via `schema.model_dump_json()` / `ConversationStateSchema.model_validate_json(raw)`. |
+| `session:facts:{tenant_id}:{session_id}` | None (durable, no expiry — checkpointed to SQL on every write) | JSON-serialized `FactsSchema` via `schema.model_dump_json()` (Pydantic v2). Deserialized with `FactsSchema.model_validate_json(raw)`. UUID and Decimal fields round-trip correctly with this method. |
+| `conversation:state:{tenant_id}:{session_id}` | `settings.session.conversation_state_ttl_seconds` (default 1800; reset on every write) | JSON-serialized `ConversationStateSchema` via `schema.model_dump_json()` / `ConversationStateSchema.model_validate_json(raw)`. |
 
 ## 16. API Endpoints
 This module is consumed internally by the Orchestrator; no public HTTP endpoints of its own in v4.1 scope (no admin UI for direct Facts editing).
@@ -185,7 +185,7 @@ N/A.
 - `test_clarification_round_increment_persists`
 
 ## 25. Configuration
-No new settings beyond `Settings.redis` / `Settings.db` from Module 01. `CONVERSATION_STATE_TTL_SECONDS: int = 1800` is defined as a module-level constant at the top of `session/service.py`. This is the single and only definition; it is not duplicated in `config.py`. All other modules that reference the TTL value must import this constant from `app.session.service`.
+Uses `Settings.redis`, `Settings.db`, and `settings.session.conversation_state_ttl_seconds` from Module 01 / Module 00 §10. This module does not define a separate TTL constant.
 
 ## 26. Environment Variables
 None new.
@@ -197,12 +197,12 @@ Orchestrator.on_turn(session_id, message)
         ▼
 SessionStateService.get_facts(tenant_id, session_id)
         │
-   Redis GET facts:{tenant_id}:{session_id}
+   Redis GET session:facts:{tenant_id}:{session_id}
         │ miss?
         ▼
    FactsRepository.get(tenant_id, session_id)  → Postgres
         │
-   Redis SET facts:{...} (no TTL)
+   Redis SET session:facts:{...} (no TTL)
         │
         ▼
    return FactsSchema
@@ -220,7 +220,7 @@ Redis (hot cache) ⇄ SessionStateService ⇄ Postgres (durability)
 
 ## 30. Example Workflow
 1. User says "My budget is $50k" → Router extracts this into a Facts patch → `update_facts(tenant_id, session_id, {budget: 50000})`.
-2. Redis eviction later clears `conv:{...}` (30-min TTL lapses mid-conversation).
+2. Redis eviction later clears `conversation:state:{...}` after `settings.session.conversation_state_ttl_seconds` lapses mid-conversation.
 3. Next turn: `get_conversation_state` misses Redis, recovers from Postgres (last known intent/plan state); `get_facts` is unaffected — budget of $50k is still returned instantly from its own, still-live Redis key.
 
 ## 31. Future Extension Points
@@ -233,3 +233,8 @@ Redis (hot cache) ⇄ SessionStateService ⇄ Postgres (durability)
 - [ ] Cache-miss recovery works independently for each
 - [ ] `reset_conversation_state` never mutates Facts
 - [ ] Tests above pass
+
+## 33. Hardening Update: Facts Lifecycle and Canonical Interfaces
+Facts extraction is owned by Module 06, not this storage module. Module 03 receives validated `FactsUpdate` patches from `FactsExtractor` and persists them with `SessionStateService.update_facts`. The canonical facts lifecycle, merge rules, conflict behavior, and retry behavior are defined in Module 00 §6.
+
+Canonical interfaces are defined in Module 00 §5 and replace any shorthand in this document. `SessionStateService` exposes `get_facts`, `update_facts`, `get_conversation_state`, `update_conversation_state`, `update_clarification_state`, and `reset_conversation_state`; it does not expose a generic `get()` method. Redis key names are authoritative in Module 00 §9.

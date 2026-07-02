@@ -15,7 +15,7 @@ v3/v4 (unchanged per architecture §2.9), now triggered as an explicit plan step
 gated by the Security Policy like any other tool.
 
 ## 4. Dependencies
-Module 03 (Facts — quote slots including `quantity`, `company`, `product_interest`, `budget`), Module 05 (LLM — `QuoteExplainer.explain` calls `OllamaClient.chat`), Module 08 (Prompt Manager — `tools/quote_explanation_v1.md`), Module 09 (`ENABLE_QUOTES` flag), Module 10 (registered tool + policy), Module 11 (product data for pricing lookup — `product_pricing` has FK on `products.id`; **M11 migrations and seed data must be applied before M12's `product_pricing` migration and seed**).
+Module 03 (Facts — quote slots including `quantity`, `company`, `product_interest`, `budget`), Module 05 (LLM — uses `LLMClientProtocol` protocol interface instead of concrete client), Module 08 (Prompt Manager — uses `PromptProvider` protocol interface), Module 09 (`ENABLE_QUOTES` flag), Module 10 (registered tool + policy), Module 11 (product data for pricing lookup — `product_pricing` has FK on `products.id`; **M11 migrations and seed data must be applied before M12's `product_pricing` migration and seed**), Module 16 (Observability & Metrics — quote builder metrics).
 
 ## 5. Folder Structure
 ```
@@ -41,9 +41,9 @@ tests/
 | File | Responsibility |
 |---|---|
 | `models.py` | ORM model for `quotes`, `ProductPricing` |
-| `schemas.py` | `QuoteSlots`, `QuoteResult`, `QuoteLineItem`, **`quote_slots_complete(facts: FactsSchema) -> bool`** — the single canonical definition used by Planner (M07), Security Policy (M10), and Builder (this file); no other module may define or duplicate this logic |
+| `schemas.py` | `QuoteSlots`, `QuoteResult`, `QuoteLineItem` |
 | `repository.py` | `QuoteRepository.create(...)`, `get(...)`, `ProductPricingRepository.get_prices(...)` |
-| `builder.py` | `QuoteBuilder.build(session, context) -> QuoteResult` — the deterministic pricing calculation; `QuoteExplainer.explain(quote_result) -> str` — the LLM narration call |
+| `builder.py` | `QuoteBuilder.build(session, context) -> QuoteResult` — the deterministic pricing calculation; `QuoteExplainer.explain(quote_result, llm_client: LLMClientProtocol, prompt_provider: PromptProvider) -> str` — the LLM narration call |
 | `exceptions.py` | `IncompleteQuoteSlotsError`, `PricingDataMissingError` |
 
 ## 8. Classes
@@ -67,8 +67,8 @@ of catalog/spec data without touching RAG ingestion.)*
 - `QuoteLineItem { product_id: UUID, name: str, unit_price: Decimal, quantity: int, subtotal: Decimal }`.
 - `QuoteResult { quote_id: UUID, company: str, line_items: list[QuoteLineItem], total: Decimal, currency: str }`.
 
-**`quote_slots_complete(facts: FactsSchema) -> bool`** — defined in `app/quotes/schemas.py`. This is the **single canonical implementation**. Returns `True` if and only if `facts.company is not None and facts.product_interest is not None and facts.quantity is not None and facts.budget is not None`. Imported by:
-- Module 07 (`app/quotes/schemas.py` → `quote_slots_complete`)
+**`quote_slots_complete(facts: FactsSchema) -> bool`** — defined in **`app/quotes/schemas.py`**. This is the **single canonical implementation** owned by the Quote Builder module. Returns `True` if and only if `facts.company is not None and facts.product_interest is not None and facts.quantity is not None and facts.budget is not None`. Imported by:
+- Module 07 (`app.quotes.schemas` → `quote_slots_complete`)
 - Module 10 `policy.py` predicate registry (`'quote_slots_complete': quote_slots_complete`)
 - `builder.py` in this module (defensive re-validation)
 
@@ -93,17 +93,17 @@ No other module may define a `quote_slots_complete` function. The import path is
 8. Fire-and-forget: `asyncio.create_task(NotificationService.notify_quote_generated(quote_result))` from Module 14 — failure is swallowed and logged at `WARNING`, never re-raised.
 9. Return `QuoteResult`.
 
-`QuoteExplainer.explain(quote_result: QuoteResult) -> str`:
+`QuoteExplainer.explain(quote_result: QuoteResult, llm_client: LLMClientProtocol, prompt_provider: PromptProvider) -> str`:
 ```python
 system_msg = ChatMessage(
     role="system",
-    content=prompt_manager.get("tools", "quote_explanation", "1")
+    content=prompt_provider.get("quotes", "quote_explanation", "1")
 )
 user_msg = ChatMessage(
     role="user",
     content=f"Here is the computed quote:\n{quote_result.model_dump_json()}"
 )
-response = await ollama_client.chat(
+response = await llm_client.chat(
     messages=[system_msg, user_msg],
     temperature=0.3
 )
@@ -120,7 +120,7 @@ ToolRegistry.register('generate_quote', QuoteBuilder.build)
 
 ## 13. Internal Interfaces
 - Registered as Tool Executor (Module 10) step `generate_quote`, policy: `allowed_intents: [sales_inquiry, quote_request]`, `required_state: [quote_slots_complete]`, `required_slots: [company, product_interest, quantity, budget]`, `rate_limit: "5/min"`, `audit_log: true`.
-- `quote_slots_complete` is the single canonical predicate defined in **this module's `schemas.py`** and imported by Module 07 and Module 10. No other module defines this predicate.
+- `quote_slots_complete` is the single canonical predicate defined in **`app/quotes/schemas.py`** and imported by Module 07, Module 10, and this module.
 - Tool function signature (required by Module 10's `ToolRegistry`): `async def generate_quote_tool(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult` — implemented in `builder.py`, wraps `QuoteBuilder.build` and `QuoteExplainer.explain`, returns `ToolExecutionResult(step='generate_quote', success=True, result_summary=explanation_text, product_ids=None)`.
 - **Pricing seed**: run `python scripts/seed_pricing.py --source pricing.json --tenant-id $DEFAULT_TENANT_ID` after M11's ingestion script. Input format: `[{"product_id": "<uuid>", "unit_price": 999.00, "currency": "USD"}]`. Must run after M11 products are ingested so FK constraints are satisfied.
 
@@ -146,7 +146,7 @@ CREATE TABLE product_pricing (
 ```
 
 ## 15. Redis Keys
-`ratelimit:{tenant_id}:{session_id}:generate_quote` — reused from Module 10's generic rate-limit key pattern, backing the `"5/min per session"` policy clause.
+`rate_limit:tool:{tenant_id}:{session_id}:generate_quote` — reused from Module 10's generic rate-limit key pattern, backing the `"5/min per session"` policy clause.
 
 ## 16. API Endpoints
 None public — invoked only via the `generate_quote` plan step inside `/chat` (Module 15). No standalone `/quotes` HTTP endpoint in v4.1 scope (no quote-retrieval UI beyond what's shown in the chat transcript).
@@ -164,18 +164,18 @@ N/A (internal tool invocation).
 ## 20. Validation Rules
 - `quantity` must be a positive integer.
 - `budget` (from Facts) is informational context passed to `QuoteExplainer` (e.g., "this fits within your stated budget") but never alters `unit_price` or `total` — budget is not a discount input in v4.1 scope.
-- Every `product_id` in `product_ids` must have a corresponding `product_pricing` row; missing pricing raises `MissingPricingError`, not a silent $0 line item.
+- Every `product_id` in `product_ids` must have a corresponding `product_pricing` row; missing pricing raises `PricingDataMissingError`, not a silent $0 line item.
 
 ## 21. Error Handling
 | Error | Handling |
 |---|---|
 | Quote slots incomplete (defensive re-check fails) | Raise `IncompleteQuoteSlotsError`; Tool Executor records failed step; Orchestrator's `respond`/`request_missing_slots` step (already in the plan per Module 07's rules) explains what's missing via the template library (Module 13) |
-| Missing pricing for a product | Raise `MissingPricingError`; step fails, logged at `ERROR` (a catalog data gap, worth fixing), quote not generated |
+| Missing pricing for a product | Raise `PricingDataMissingError`; step fails, logged at `ERROR` (a catalog data gap, worth fixing), quote not generated |
 | DB write failure on `QuoteRepository.create` | Raise `ExternalServiceError`; step fails; no partial/inconsistent quote is returned to the user (all-or-nothing) |
 
 ## 22. Logging Strategy
 - Log every quote build attempt at `INFO`: `tenant_id`, `session_id`, product count, total (total is business data, not a secret — safe to log, unlike raw PII in Facts).
-- Log `MissingPricingError`/`IncompleteQuoteSlotsError` at `WARNING` (expected, recoverable via clarification) vs DB failures at `ERROR`.
+- Log `PricingDataMissingError`/`IncompleteQuoteSlotsError` at `WARNING` (expected, recoverable via clarification) vs DB failures at `ERROR`.
 
 ## 23. Unit Tests
 - `test_quote_builder_computes_correct_subtotals_and_total`
@@ -240,3 +240,6 @@ Invoked once per turn when `generate_quote` is both in-plan and policy-allowed, 
 - [ ] `quote_slots_complete` predicate shared identically across Planner, Policy, and Builder
 - [ ] Rate limit enforced per Security Policy
 - [ ] Tests above pass
+
+## 33. Hardening Update: Exception and Context Alignment
+The canonical missing-pricing exception is `PricingDataMissingError`. Quote narration uses `quotes/quote_explanation_v1.md` and Module 05 `build_llm_messages(...)`, not ad hoc prompt construction. Quote unavailability follows the user-visible degradation contract in Module 00 §14.

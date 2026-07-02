@@ -22,7 +22,7 @@ Every module that produces a metric-worthy event (Modules 06, 10, 11, 12, 14) em
 ## 5. Folder Structure
 ```
 app/
-├── metrics/
+├── observability/
 │   ├── __init__.py
 │   ├── registry.py
 │   ├── router.py
@@ -68,7 +68,7 @@ N/A.
 `MetricsRegistry` methods (§8) are called inline by other modules at the relevant point in their own logic — e.g., Module 06's `Router.classify` calls `increment_intent_classification` and `record_intent_confidence` right after computing `IntentResult`; Module 11's `RetrievalService` calls `increment_rag_hit`; Module 12's `QuoteBuilder`/`QuoteExplainer` boundary calls `increment_quote_result`; Module 14's `RetryWorker` calls `increment_crm_sync_result`.
 
 ## 13. Internal Interfaces
-- `MetricsRegistry` is a process-wide singleton — module-level instance created in `app/observability/metrics.py` as `metrics_registry = MetricsRegistry()`. Other modules import it as `from app.observability.metrics import metrics_registry`. No `Depends()` injection needed since metrics have no per-request state. **Test isolation**: in unit tests, modules under test should patch `app.observability.metrics.metrics_registry` with a `MagicMock()` or a `FakeMetricsRegistry` that no-ops all calls — this prevents test runs from polluting the global Prometheus registry.
+- `MetricsRegistry` is a process-wide singleton — module-level instance created in `app/observability/registry.py` as `metrics_registry = MetricsRegistry()`. Other modules import it as `from app.observability.registry import metrics_registry`. No `Depends()` injection needed since metrics have no per-request state. **Test isolation**: in unit tests, modules under test should patch `app.observability.registry.metrics_registry` with a `MagicMock()` or a `FakeMetricsRegistry` that no-ops all calls — this prevents test runs from polluting the global Prometheus registry.
 - `GET /metrics` returns `prometheus_client.generate_latest()` output — human/tool-readable Prometheus text format, consumable via `curl localhost:8000/metrics`.
 - `GET /ready`: performs three checks (see §19), returns HTTP 200 with `status: "ready"` when all pass, HTTP 503 with `status: "not_ready"` and per-check detail when any fail. HTTP 503 is chosen so `curl -f` and load-balancer health gates work without parsing the response body.
 
@@ -179,3 +179,6 @@ Every module → `MetricsRegistry` (in-memory) → `/metrics` text output, read 
 - [ ] `/ready` checks DB, Redis, and Ollama independently and reports per-check status
 - [ ] No per-turn detail (prompts, tool call args) ever flows into a metric label (cardinality/privacy hazard) — only low-cardinality dimensions like `source`, `intent`, `success`
 - [ ] Tests above pass
+
+## 33. Hardening Update: Package Naming and Metrics Contract
+The canonical package name is `app.observability`, not `app.metrics`. Metrics interfaces are listed in Module 00 §5, and allowed labels/logging boundaries are in Module 00 §14. Metrics must never include high-cardinality values such as raw messages, prompt text, session IDs as labels, contact info, or full tool arguments.

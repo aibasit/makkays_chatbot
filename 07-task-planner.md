@@ -15,7 +15,7 @@ what's already known, without hardcoding every combination into the intent
 taxonomy itself.
 
 ## 4. Dependencies
-Module 03 (Facts and ConversationState schemas — `FactsSchema`, `ConversationStateSchema`), Module 09 (`FeatureFlags` object, received from the Orchestrator), Module 12 (`quote_slots_complete` function imported from `app.quotes.schemas` — the single canonical predicate owner).
+Module 03 (Facts and ConversationState schemas — `FactsSchema`, `ConversationStateSchema`), Module 09 (`FeatureFlags` object, received from the Orchestrator), Module 12 (Quotes — Planner imports the single canonical `quote_slots_complete` predicate from `app.quotes.schemas`).
 
 ## 5. Folder Structure
 ```
@@ -59,16 +59,16 @@ N/A — stateless, pure function module.
 ## 12. Service Layer
 `TaskPlanner.build_plan(intent_result: IntentResult, facts: FactsSchema, state: ConversationStateSchema, flags: FeatureFlags) -> Plan`:
 - Looks up the rule function for `intent_result.intent`; raises `UnknownIntentError` if not found.
-- Calls the rule function with `(facts, state, flags, intent_result)` — passing the full `IntentResult` gives rule functions access to `spec_question_detected` and `candidates` without importing Module 06's types.
+- Calls the rule function with `(facts, state, flags, intent_result)` — passing the full `IntentResult` (imported from `app.shared.intent_context` to prevent circular dependencies) gives rule functions access to `spec_question_detected` and `candidates` without importing Module 06's router code.
 - Returns the resulting `Plan`.
 
 Rule functions are pure synchronous functions: no DB, no Redis, no LLM calls.
 
-`quote_slots_complete` is imported from `app.quotes.schemas` (Module 12). This is the single canonical definition. The Planner does not define or duplicate this predicate.
+`quote_slots_complete` is imported from `app.quotes.schemas`. This is the single canonical definition. The Planner does not define or duplicate this predicate.
 
 `contact_info_newly_captured(state: ConversationStateSchema) -> bool`: returns `state.contact_info_captured == True`. The flag is set in `conversation_state` by the Orchestrator (Module 06) when the LLM-extracted contact fields (contact_name/email/phone in session_facts) become non-None for the first time this session.
 
-`spec_question_detected` is read from `intent_result.spec_question_detected` (populated by Module 06's Tier1RuleEngine). No import of Module 06 types is needed — the value is carried on the `IntentResult` object passed into `build_plan`.
+`spec_question_detected` is read from `intent_result.spec_question_detected` (populated by Module 06's Tier1RuleEngine). No import of Module 06 types is needed — the value is carried on the `IntentResult` object passed into `build_plan` (imported from `app.shared.intent_context`).
 
 ## 13. Internal Interfaces
 - `build_plan(intent, facts, state, flags) -> Plan` — the only public entrypoint, called by `Orchestrator.on_turn` (Module 06) immediately after intent acceptance.
@@ -98,13 +98,14 @@ All rule functions have the signature `fn(facts: FactsSchema, state: Conversatio
 | Always | `retrieve_products` |
 | `intent_result.spec_question_detected == True` | `+ retrieve_docs` |
 | `flags.enable_quotes and quote_slots_complete(facts)` | `+ generate_quote` |
+| `flags.enable_quotes and not quote_slots_complete(facts) and intent_result.intent == 'quote_request'` | `+ request_missing_slots` |
 | `flags.enable_crm and contact_info_newly_captured(state)` | `+ create_lead` |
 | Always (last step) | `+ respond` |
 
 `quote_slots_complete(facts)` is imported from `app.quotes.schemas` — single source of truth.
 `contact_info_newly_captured(state)` checks `state.contact_info_captured == True`.
 
-**`plan_quote_request`**: Always `['retrieve_products', 'generate_quote', 'respond']` (quote slots must be complete per the policy check in Module 10, which is the enforcement point; the Planner simply produces the steps and trusts the Executor's policy layer to gate execution).
+**`plan_quote_request`**: `['retrieve_products', 'generate_quote', 'respond']` when `quote_slots_complete(facts)` and `flags.enable_quotes` are both true. Otherwise `['retrieve_products', 'request_missing_slots', 'respond']`. Module 10 remains the enforcement point, but the Planner emits the user-facing missing-slot step so the response is deterministic and tests align with registered tools.
 
 **`plan_technical_support`**: Always `['retrieve_docs', 'respond']`.
 
@@ -131,7 +132,7 @@ All rule functions have the signature `fn(facts: FactsSchema, state: Conversatio
 - `test_plan_sales_inquiry_rag_flag_off_skips_retrieve_docs`
 - `test_plan_sales_inquiry_multiple_candidates_includes_compare`
 - `test_plan_sales_inquiry_quote_slots_complete_includes_generate_quote`
-- `test_plan_sales_inquiry_quote_slots_incomplete_includes_request_missing_slots`
+- `test_plan_quote_request_quote_slots_incomplete_includes_request_missing_slots`
 - `test_plan_sales_inquiry_fallback_is_respond_when_nothing_else_matches`
 - `test_build_plan_unknown_intent_raises`
 - `test_build_plan_never_returns_empty_steps`
@@ -182,3 +183,8 @@ See architecture §2.4 example: `sales_inquiry` with no product yet identified a
 - [ ] Feature-flag filtering applied as defense in depth
 - [ ] Full synthetic fact/state test matrix per intent
 - [ ] Built and unit-tested standalone before Tool Executor wiring (per Build Order step 6)
+
+## 33. Hardening Update: Planner/Executor Consistency
+The authoritative registered step set is Module 00 §16: `retrieve_products`, `retrieve_docs`, `compare`, `generate_quote`, `request_missing_slots`, `create_lead`, and `respond`. Every Planner-emitted step must be in that set and must have a Module 10 tool registration and security policy. `create_ticket` is reserved for a future ticket implementation and must not be emitted by v4.1 Planner rules. Planner tests must not reference unregistered steps.
+
+`plan_quote_request` emits `request_missing_slots` for incomplete quote facts. Policy checks in Module 10 still deny unsafe `generate_quote` execution; the Planner simply avoids producing a known-denied quote step when facts are incomplete.

@@ -146,6 +146,10 @@ site: SiteSettings (site_api_key,
                     session_cookie_name: str = "sales_engineer_session_id",
                     chat_rate_limit_per_minute: int = 20,
                     max_message_length: int = 4000)
+router: RouterSettings (classification_confidence_threshold: float = 0.70)
+session: SessionSettings (conversation_state_ttl_seconds: int = 1800)
+clarification: ClarificationSettings (max_rounds: int = 2)
+rag: RagSettings (search_limit_default: int = 5, search_limit_max: int = 10)
 flags: FeatureFlagDefaults (enable_rag, enable_quotes, enable_crm, enable_tickets,
                             enable_image_upload, enable_llm_clarification_rewrite)
 prompts: PromptSettings (library_path: str = "./prompt_library")
@@ -154,7 +158,10 @@ logging: LoggingSettings (log_level)
 ```
 
 ## 26. Environment Variables
-All variables from Module 00 §1.1 are declared here as the canonical `Settings` schema. This module introduces no new required variables. The following optional variables with safe defaults are also declared here: `OLLAMA_TIMEOUT_SECONDS` (default `30`), `PROMPT_LIBRARY_PATH` (default `./prompt_library`), `SECURITY_POLICY_DIR` (default `./security_policies`), `CORS_ALLOW_ORIGINS` (default `http://localhost:5173`).
+All variables from Module 00 §1.1 and Module 00 §10 are declared here as the canonical `Settings` schema. This module introduces no new required variables. Optional variables with safe defaults include `OLLAMA_TIMEOUT_SECONDS`, `CLASSIFICATION_CONFIDENCE_THRESHOLD`, `CONVERSATION_STATE_TTL_SECONDS`, `MAX_CLARIFICATION_ROUNDS`, `RAG_SEARCH_LIMIT_DEFAULT`, `RAG_SEARCH_LIMIT_MAX`, `CRM_MAX_RETRY_ATTEMPTS`, `CRM_RETRY_WORKER_INTERVAL_SECONDS`, `CHAT_RATE_LIMIT_PER_MINUTE`, `MAX_MESSAGE_LENGTH`, `PROMPT_LIBRARY_PATH`, `SECURITY_POLICY_DIR`, and `CORS_ALLOW_ORIGINS`.
+
+### 26.1 Hardening Update: Canonical Lifecycle Ownership
+Module 01 is the sole owner of startup/shutdown orchestration. It implements the lifecycle order in Module 00 §12 exactly: load settings, configure logging, initialize DB/Redis, initialize metrics, load prompts and run prompt self-check, import tool-owning modules, load/validate security policies, validate RAG when enabled, register CRM scheduler hooks, register routers/middleware/exception handlers, then start APScheduler. Shutdown order is scheduler, LLM HTTP client, Redis, SQL engine. Other modules may expose `register_hooks(app, settings) -> None`, but only Module 01 calls those hooks.
 
 ## 27. Sequence Diagram
 ```

@@ -15,7 +15,7 @@ testable, screenshot-able UX for the single highest-friction moment in the
 conversation — when the system isn't sure what the user wants.
 
 ## 4. Dependencies
-Module 03 (Conversation State — `clarification_candidates`, `clarification_rounds`), Module 05 (LLM engine, only if rewrite flag is on), Module 08 (Prompt Manager, template storage), Module 09 (`ENABLE_LLM_CLARIFICATION_REWRITE` flag).
+Module 03 (Conversation State — `clarification_candidates`, `clarification_rounds`), Module 05 (LLM engine — depends on `LLMClientProtocol` protocol), Module 08 (Prompt Manager — depends on `PromptProvider` protocol), Module 09 (`ENABLE_LLM_CLARIFICATION_REWRITE` flag).
 
 ## 5. Folder Structure
 ```
@@ -64,14 +64,14 @@ No new tables — reuses `conversation_state.clarification_candidates`, `.clarif
 None new — uses `ConversationStateRepository`/`SessionStateService` (Module 03) to read/increment `clarification_rounds` and persist `last_question`.
 
 ## 12. Service Layer
-`ClarificationFlow.run(tenant_id: UUID, session_id: str, intent_result: IntentResult, facts: FactsSchema, state: ConversationStateSchema) -> ClarificationResult`:
-1. Read current `clarification_rounds = state.clarification_rounds` from the already-loaded state (passed in from Orchestrator — no extra DB read needed).
-2. If `clarification_rounds >= MAX_CLARIFICATION_ROUNDS` (constant = `2`, defined in `clarification/service.py`, not env-configurable in v4.1): raise `MaxClarificationRoundsExceededError(session_id=session_id, rounds=clarification_rounds)` — caller (Orchestrator, Module 06) catches this and overrides `intent_result.intent = 'escalation_request'`, then falls through to the Planner.
+`ClarificationFlow.run(tenant_id: UUID, session_id: str, intent_result: IntentResult, facts: FactsSchema, state: ConversationStateSchema, llm_client: LLMClientProtocol, prompt_provider: PromptProvider) -> ClarificationResult`:
+1. Read current `clarification_rounds = state.clarification_rounds` from the already-loaded state.
+2. If `clarification_rounds >= settings.clarification.max_rounds` (default `2`): raise `MaxClarificationRoundsExceededError(session_id=session_id, rounds=clarification_rounds)`.
 3. `template_name = TemplateLookup.resolve(intent_result.candidates)`.
-4. `template_text = prompt_manager.get("clarification", template_name, "1")` (Module 08 `prompt_manager` singleton). If `PromptNotFoundError` is raised for the specific match, retry with `generic_fallback` (never block if fallback is present; if fallback too is missing, Module 08's startup self-check would have caught it already).
-5. If `flags.enable_llm_clarification_rewrite` (flag passed in from Orchestrator's already-resolved `FeatureFlags`): call `ollama_client.chat(messages=[system_msg, user_msg], temperature=0.2)` where `system_msg.content = prompt_manager.get('clarification', 'llm_rewrite_instructions', '1')` and `user_msg.content = template_text`. If the LLM call throws or validation fails (see §20), fall back to verbatim `template_text`.
+4. `template_text = prompt_provider.get("clarification", template_name, "1")`. If `PromptNotFoundError` is raised for the specific match, retry with `generic_fallback`.
+5. If `flags.enable_llm_clarification_rewrite`: call `llm_client.chat(messages=[system_msg, user_msg], temperature=0.2)` where `system_msg.content = prompt_provider.get('clarification', 'llm_rewrite_instructions', '1')` and `user_msg.content = template_text`. If the LLM call throws or validation fails, fall back to verbatim `template_text`.
 6. Else: `question_text = template_text`.
-7. Atomically increment `clarification_rounds` and persist `last_question` in one operation: call `SessionStateService.update_clarification_state(tenant_id, session_id, question_text=question_text)` which issues: `UPDATE conversation_state SET clarification_rounds = clarification_rounds + 1, last_question = :q, awaiting_clarification = true WHERE tenant_id = :t AND session_id = :s` — single SQL, no Python read-modify-write (Module 03 §11 atomic increment pattern).
+7. Atomically increment `clarification_rounds` and persist `last_question` in one operation: call `SessionStateService.update_clarification_state(tenant_id, session_id, question_text=question_text)` which issues a single SQL `UPDATE` statement.
 8. Return `ClarificationResult(question_text=question_text, source='template+llm_rewrite' if rewrite_used else 'template')`.
 
 `TemplateLookup.resolve(candidates: list[str]) -> str`:
@@ -93,7 +93,7 @@ None new — uses `ConversationStateRepository`/`SessionStateService` (Module 03
 None new.
 
 ## 15. Redis Keys
-None new — reuses `conv:{tenant_id}:{session_id}` (Module 03).
+None new — reuses `conversation:state:{tenant_id}:{session_id}` (Module 03 / Module 00 §9).
 
 ## 16. API Endpoints
 None — internal, surfaced to the user only as the `assistant_message` of a `/chat` response (Module 15).
@@ -111,13 +111,13 @@ N/A.
 
 ## 20. Validation Rules
 - If LLM rewrite is enabled, the rewritten text is validated post-hoc by checking that every option line extracted from the original template is present (case-insensitive substring match) in the rewritten text. "Option lines" are defined as lines beginning with `- ` or `*` or containing a numbered prefix `N.` in the original template. If any option line is missing from the rewritten text, **discard the rewrite and use the verbatim template** — log `WARNING('clarification_rewrite_validation_failed', missing_options=[...])`.
-- `MAX_CLARIFICATION_ROUNDS = 2` — module-level constant in `clarification/service.py`. Not env-configurable in v4.1 scope. Any change requires a code edit.
+- Maximum clarification rounds comes from `settings.clarification.max_rounds` / `MAX_CLARIFICATION_ROUNDS` (default `2`) in Module 00 §10.
 - `clarification_rounds` increment is atomic: always uses the SQL `UPDATE ... SET clarification_rounds = clarification_rounds + 1 ...` pattern (Module 03 §11). Never read-then-write in Python.
 
 ## 21. Error Handling
 | Error | Handling |
 |---|---|
-| `clarification_rounds >= MAX_CLARIFICATION_ROUNDS` | Raise `MaxClarificationRoundsExceededError`; Orchestrator catches, sets intent to `escalation_request`, proceeds through Planner/Tool Executor as normal for that intent (unchanged from v4) |
+| `clarification_rounds >= settings.clarification.max_rounds` | Raise `MaxClarificationRoundsExceededError`; Orchestrator catches, sets intent to `escalation_request`, proceeds through Planner/Tool Executor as normal for that intent (unchanged from v4) |
 | Template file missing (`PromptNotFoundError` from Module 08) | Falls back to `generic_fallback.md`; if that too is missing, this is a startup-time configuration bug caught by Module 08's self-check, not a runtime path to handle further here |
 | LLM rewrite fails validation (option set altered) or the LLM call itself fails/times out (Module 05 exceptions) | Discard rewrite, use verbatim template — never block the user on a rewrite failure |
 
@@ -149,11 +149,11 @@ N/A.
 ## 25. Configuration
 ```
 clarification:
-  max_clarification_rounds: int = 2
+  max_rounds: int = 2
 ```
 
 ## 26. Environment Variables
-`ENABLE_LLM_CLARIFICATION_REWRITE` (already defined in Module 00).
+`ENABLE_LLM_CLARIFICATION_REWRITE`, `MAX_CLARIFICATION_ROUNDS` (defined in Module 00).
 
 ## 27. Sequence Diagram
 ```
@@ -166,7 +166,7 @@ ClarificationFlow.run(tenant_id, session_id, candidates)
         │ no
    TemplateLookup.resolve(candidates) → template_name
         │
-   PromptManager.get("clarification", template_name, "latest") → template_text
+   PromptManager.get("clarification", template_name, "1") → template_text
         │
    enable_llm_clarification_rewrite? ── yes ──► OllamaClient.chat(...) → validate option-preservation
         │                                              │ fail → discard, use verbatim
@@ -202,3 +202,6 @@ Matches architecture §2.13 exactly:
 - [ ] Rewrite path validates option-set preservation and falls back safely on failure
 - [ ] `clarification_rounds` correctly gates escalation fallback
 - [ ] Tests above pass
+
+## 33. Hardening Update: Canonical Interface and Prompt Names
+The canonical interface is `ClarificationFlow.run(tenant_id, session_id, intent_result, facts, state, flags) -> ClarificationResult` from Module 00 §5. The flow uses the already-resolved `FeatureFlags` object passed by Module 06; it does not call `FeatureFlagsService` itself. Prompt file names and fallback behavior are authoritative in Module 00 §8. Clarification exceeded behavior follows Module 00 §14 and routes to `escalation_request`.

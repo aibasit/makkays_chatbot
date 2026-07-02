@@ -17,7 +17,7 @@ durable retry queue pattern. Email notifications give the sales team immediate
 visibility into new leads/quotes without polling the CRM.
 
 ## 4. Dependencies
-Module 01 (lifespan hooks — `register_hooks(app, settings)` registers the APScheduler scheduler), Module 02 (DB), Module 03 (Facts — `contact_name`, `contact_email`, `contact_phone` carried into the lead record from `session_facts`), Module 09 (`ENABLE_CRM` flag), Module 10 (registered as `create_lead` tool + policy), Module 12 (`notify_quote_generated` called by Module 12's `QuoteBuilder.build` as a fire-and-forget task).
+Module 01 (lifespan hooks — `register_hooks(app, settings)` registers the APScheduler scheduler), Module 02 (DB), Module 03 (Facts — `contact_name`, `contact_email`, `contact_phone` carried into the lead record from `session_facts`), Module 09 (`ENABLE_CRM` flag), Module 10 (registered as `create_lead` tool + policy), Module 12 (`notify_quote_generated` called by Module 12's `QuoteBuilder.build` as a fire-and-forget task), Module 16 (Observability & Metrics — CRM and lead creation metrics).
 
 ## 5. Folder Structure
 ```
@@ -166,7 +166,7 @@ CREATE INDEX idx_retry_queue_due ON retry_queue (status, next_attempt_at) WHERE 
 ```
 
 ## 15. Redis Keys
-`ratelimit:{tenant_id}:{session_id}:create_lead` — reused rate-limit pattern from Module 10, backing `"3/min per session"`.
+`rate_limit:tool:{tenant_id}:{session_id}:create_lead` — reused rate-limit pattern from Module 10, backing `"3/min per session"`.
 
 ## 16. API Endpoints
 None public — `create_lead` invoked only via the plan step inside `/chat`. No standalone `/leads` HTTP endpoint in v4.1 scope.
@@ -232,7 +232,7 @@ resend:
 ```
 
 ## 26. Environment Variables
-`CRM_API_BASE_URL`, `CRM_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (already defined in Module 00).
+`CRM_API_BASE_URL`, `CRM_API_KEY`, `CRM_MAX_RETRY_ATTEMPTS`, `CRM_RETRY_WORKER_INTERVAL_SECONDS`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (defined in Module 00).
 
 ## 27. Sequence Diagram
 ```
@@ -283,3 +283,6 @@ APScheduler → RetryWorker.run()
 - [ ] `facts_snapshot` correctly captured at creation time, not live-joined
 - [ ] Email notifications are best-effort and never block lead/CRM flow
 - [ ] Tests above pass
+
+## 33. Hardening Update: Scheduler and Error Contract
+Module 14 exposes `register_hooks(app, settings) -> None`, but Module 01 is the only caller and the sole owner of startup/shutdown ordering (Module 00 §12). CRM sync failure is never user-visible as a failed chat turn: the lead remains durable in Postgres and retry status is logged/metriced. User-visible behavior follows Module 00 §14.

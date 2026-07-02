@@ -5,7 +5,7 @@
 
 ## 2. Goal
 Implement `PromptManager.get(name, version) -> str` over a filesystem-backed,
-versioned prompt library (`system/`, `intents/`, `rag/`, `tools/`, `clarification/`),
+versioned prompt library (`system/`, `classification/`, `rag/`, `clarification/`, `tools/`, `quotes/`),
 replacing the undifferentiated "Prompt Builder" from v4.
 
 ## 3. Purpose
@@ -28,16 +28,18 @@ app/
 prompt_library/
 ├── system/
 │   └── base_v1.md
-├── intent/
-│   └── classify_intent_v1.md
+├── classification/
+│   ├── classify_intent_v1.md
+│   └── extract_facts_v1.md
 ├── rag/
 │   ├── context_inject_v1.md
 │   └── filter_extract_v1.md
 ├── clarification/
 │   ├── llm_rewrite_instructions_v1.md
 │   └── escalation_v1.md
-└── tools/
-    ├── tool_instructions_v1.md
+├── tools/
+│   └── tool_instructions_v1.md
+└── quotes/
     └── quote_explanation_v1.md
 tests/
 └── unit/
@@ -55,13 +57,22 @@ tests/
 | `exceptions.py` | `PromptNotFoundError` |
 
 ## 8. Classes
-- `PromptManager` — `get(category, name, version) -> str`, `get_latest(category, name) -> str` (convenience for dev, resolves highest version file present), internal `_cache: dict[str, str]`.
+- `PromptProvider(Protocol)` — PEP 544 structural protocol defining the standard prompt retrieval interface:
+  ```python
+  class PromptProvider(Protocol):
+      def get(self, category: str, name: str, version: str) -> str:
+          ...
+      def get_latest(self, category: str, name: str) -> str:
+          ...
+  ```
+  All callers (Router, Quote Explainer, Clarification Rewrite, built-in tools) type-hint against `PromptProvider` to allow transparent hot-swaps of database-backed prompts in the future.
+- `PromptManager` — concrete class implementing `PromptProvider`. Exposes `get(category, name, version) -> str`, `get_latest(category, name) -> str` (convenience for dev, resolves highest version file present), internal `_cache: dict[str, str]`.
 
 ## 9. Data Models
 None — prompts are files on disk, not database rows, in v4.1 scope (a `feature_flags`-style DB-backed override table is a listed future extension, not required now).
 
 ## 10. Pydantic Schemas
-- `PromptRef { category: Literal["system","intents","rag","tools","clarification"], name: str, version: str }`.
+- `PromptRef { category: Literal["system","classification","rag","clarification","tools","quotes"], name: str, version: str }`.
 - `PromptVersionTag` — a `dict[str, str]` builder helper, e.g. `{"system": "base_v1", "intent": "sales_inquiry_v2", "rag": "context_v1"}`, assembled by the Orchestrator per turn and passed to Module 04's `record_turn`.
 
 ## 11. Repository Layer
@@ -77,7 +88,8 @@ N/A — filesystem-backed, not database-backed.
 Cache is process-lifetime (no TTL) — prompt files don't change without a deploy/restart in v4.1 scope (no hot-reload requirement given local-dev-only focus, though `reload()` is listed as a future extension for dev convenience).
 
 ## 13. Internal Interfaces
-- `get(category, name, version) -> str` — called by Router (Module 06, for `system/base` and `intents/*`), RAG Engine (Module 11, for `rag/context_v1`), Tool Executor (Module 10, for `tools/tool_instructions_v1`), Clarification (Module 13, optionally for the LLM-rewrite prompt).
+- `PromptProvider` (above) — structural protocol defining the standard prompt manager operations. Exported from `app/prompts/__init__.py`.
+- `get(category, name, version) -> str` — called by Router (Module 06, for `system/base` and `classification/*`), RAG Engine (Module 11, for `rag/context_inject_v1`), Tool Executor (Module 10, for `tools/tool_instructions_v1`), Quote Explainer (Module 12, for `quotes/quote_explanation_v1`), Clarification (Module 13, optionally for the LLM-rewrite prompt).
 - Every caller is responsible for recording which `PromptRef`s it used into the `PromptVersionTag` dict threaded through to `record_turn` (Module 04) — this module does not itself write to `conversation_turns`.
 
 ## 14. Database Tables
@@ -122,13 +134,14 @@ N/A (returns plain `str`).
 - `test_get_missing_prompt_raises_prompt_not_found_error`
 - `test_startup_self_check_validates_all_referenced_prompts` — verifies all entries in the startup reference list exist on disk:
   - `("system", "base", "1")`
-  - `("intent", "classify_intent", "1")`
+  - `("classification", "classify_intent", "1")`
+  - `("classification", "extract_facts", "1")`
   - `("rag", "context_inject", "1")`
   - `("rag", "filter_extract", "1")`
   - `("clarification", "llm_rewrite_instructions", "1")`
   - `("clarification", "escalation", "1")`
   - `("tools", "tool_instructions", "1")`
-  - `("tools", "quote_explanation", "1")`
+  - `("quotes", "quote_explanation", "1")`
 - `test_startup_self_check_raises_on_missing_file` (assert boot fails if any file is absent) that walks every `PromptRef` used in the codebase (Router, RAG, Tool Executor, Clarification) and asserts the corresponding file exists — catches the "referenced but not migrated" bug class the architecture calls out in Build Order step 7.
 
 ## 24. Integration Tests
@@ -164,7 +177,7 @@ In-process, called multiple times per turn (once per prompt category needed) fro
 Filesystem (`prompt_library/`) → `PromptManager` in-memory cache → callers compose `messages` for `OllamaClient.chat` (Module 05) → `PromptVersionTag` recorded to `conversation_turns` (Module 04).
 
 ## 30. Example Workflow
-1. Migration (Build Order step 7): existing v3/v4 prompt strings are extracted from code into `prompt_library/intents/sales_inquiry_v1.md`, etc., verbatim, before any new prompt is added — "so nothing is orphaned outside the system."
+1. Migration (Build Order step 7): existing v3/v4 prompt strings are extracted into the canonical folders in Module 00 §8, for example `prompt_library/classification/classify_intent_v1.md` and `prompt_library/quotes/quote_explanation_v1.md`, before any new prompt is added — "so nothing is orphaned outside the system."
 2. A prompt tweak for sales inquiries is authored as `sales_inquiry_v2.md` (new file, old one kept for history/rollback).
 3. Router is updated to request version `"2"`; `technical_support_v1.md` is untouched.
 4. Next turn's `conversation_turns.prompt_version` shows `{"intent": "sales_inquiry_v2", ...}`, making the behavior change traceable via a `WHERE` clause.
@@ -180,3 +193,6 @@ Filesystem (`prompt_library/`) → `PromptManager` in-memory cache → callers c
 - [ ] Startup self-check confirms every code-referenced prompt exists on disk
 - [ ] `conversation_turns.prompt_version` correctly reflects a structured multi-key object
 - [ ] Tests above pass
+
+## 33. Hardening Update: Canonical Prompt Registry
+The authoritative prompt category and required-file registry is Module 00 §8. This module implements that registry exactly: use `classification/` for classifier and facts-extraction prompts and `quotes/` for quote explanation prompts.

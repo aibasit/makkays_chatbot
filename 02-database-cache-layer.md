@@ -180,3 +180,6 @@ Connection pool (engine) ↔ per-request `AsyncSession` ↔ repository layer (Mo
 - [ ] Seeding script `seed_local_dev.py` implemented and tested
 - [ ] `/health/db`, `/health/redis` implemented
 - [ ] Tests above pass
+
+## 33. Hardening Update: Registry Ownership
+Module 02 owns only DB/Redis connection lifecycle and the naming convention. The authoritative Redis key registry is Module 00 §9, and the authoritative database table/index/foreign-key registry is Module 00 §11. Module 02 must not define business keys or business tables directly; later module migrations own their tables. Startup and shutdown ordering are owned by Module 01 / Module 00 §12.

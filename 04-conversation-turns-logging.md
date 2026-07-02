@@ -74,6 +74,8 @@ tests/
 
 `TurnsService.get_next_turn_number(tenant_id, session_id) -> int` — executes: `SELECT COALESCE(MAX(turn_number), 0) + 1 FROM conversation_turns WHERE tenant_id=:tid AND session_id=:sid FOR UPDATE` within the current transaction. This locking query prevents turn number duplication race conditions during concurrent turns.
 
+`TurnsService.get_recent_turns(tenant_id, session_id, limit: int = 8) -> list[ConversationTurnRead]` — returns recent turns ordered oldest-to-newest for Module 05 context assembly and Module 06 facts extraction/classification. It never returns more than `limit`, and the caller is responsible for any further context budgeting.
+
 ## 13. Internal Interfaces
 - Every module that has "something worth debugging later" contributes to the turn record by returning a value the Orchestrator threads into `record_turn` — this module does not reach into other modules; it is a pure sink.
 - `record_turn` receives the complete `assistant_message` as built by the final `respond` step (the last item in the Tool Executor's result list). If no `respond` step ran (e.g., clarification flow instead), `assistant_message` is the `ClarificationResult.question_text`. The Orchestrator is responsible for assembling this before calling `record_turn`.
@@ -190,3 +192,8 @@ Orchestrator (aggregates data from Router, Planner, Tool Executor) → `TurnsSer
 - [ ] Shared JSON logger used by all subsequent modules (no module defines its own logger config)
 - [ ] Secret redaction verified in logs
 - [ ] Tests above pass
+
+## 33. Hardening Update: Turn Numbering and Logging Contract
+Canonical interfaces are in Module 00 §5. Implementers must ensure `get_next_turn_number` and `record_turn` execute in one transaction or otherwise rely on the unique `(tenant_id, session_id, turn_number)` constraint with retry-on-conflict. A plain aggregate query with `FOR UPDATE` over no existing rows is not sufficient by itself for concurrent first turns.
+
+Structured application logs follow Module 00 §14. Raw `user_message`, `assistant_message`, prompt text, and full facts snapshots are stored only in owned database tables where documented, not in stdout JSON logs. `correlation_id` is added by Module 15 at request entry and threaded through Orchestrator calls.

@@ -17,7 +17,7 @@ ingestion side (embedding + indexing products/docs) and the query side (layered
 retrieval) as the two `retrieve_products` / `retrieve_docs` plan steps.
 
 ## 4. Dependencies
-Module 01 (config — Qdrant/embedding settings), Module 02 (DB), Module 09 (feature flag `ENABLE_RAG`), Module 10 (registered as tools `retrieve_products`/`retrieve_docs`).
+Module 01 (config — Qdrant/embedding settings), Module 02 (DB), Module 09 (feature flag `ENABLE_RAG`), Module 10 (registered as tools `retrieve_products`/`retrieve_docs`), Module 16 (Observability & Metrics — RAG metric hits).
 
 ## 5. Folder Structure
 ```
@@ -142,7 +142,7 @@ CREATE INDEX idx_product_specs_lookup ON product_specs (tenant_id, spec_key, spe
 ## 15. Redis Keys
 | Key Pattern | TTL | Purpose |
 |---|---|---|
-| `rag:filters:{tenant_id}:{query_hash}` | 5 min | Optional cache of `ExtractedFilters` for repeated/near-identical queries within a session — listed as an optimization, not required for v4.1 correctness |
+| `rag:filters:{tenant_id}:{query_hash}` | 300s | Optional cache of `ExtractedFilters` for repeated/near-identical queries within a session — listed as an optimization, not required for v4.1 correctness |
 
 ## 16. API Endpoints
 None public — exposed only as Tool Executor steps. (No `/rag/search` HTTP endpoint in v4.1 scope; the frontend never queries RAG directly, only through `/chat`.)
@@ -203,7 +203,7 @@ rag:
 ```
 
 ## 26. Environment Variables
-`QDRANT_URL`, `QDRANT_API_KEY`, `EMBEDDING_MODEL` (already defined in Module 00).
+`QDRANT_URL`, `QDRANT_API_KEY`, `EMBEDDING_MODEL`, `RAG_SEARCH_LIMIT_DEFAULT`, `RAG_SEARCH_LIMIT_MAX` (defined in Module 00).
 
 ## 27. Sequence Diagram
 ```
@@ -244,3 +244,6 @@ Matches architecture §2.6 example exactly: query *"48-port Cisco PoE switch"* �
 - [ ] SQL narrows before Qdrant search; unscoped fallback works when no filters match
 - [ ] `retrieve_docs` reuses `retrieve_products`' candidate set within the same plan
 - [ ] Tests above pass
+
+## 33. Hardening Update: Context, Config, and Registry Alignment
+Search limits come only from `settings.rag.search_limit_default` and `settings.rag.search_limit_max` in Module 01 / Module 00 §10. Redis and database ownership are authoritative in Module 00 §9 and §11. RAG results passed to any LLM response must be formatted through Module 05 `build_llm_messages(...)` so source ordering, attribution, duplicate removal, and truncation follow Module 00 §7.

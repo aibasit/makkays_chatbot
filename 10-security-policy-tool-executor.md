@@ -17,7 +17,7 @@ and logged, never silently skipped — this is what "prevents accidental or
 malicious execution" means concretely in this architecture.
 
 ## 4. Dependencies
-Module 03 (Facts/Conversation State), Module 05 (LLM engine, for the tool-calling loop), Module 07 (Plan shape), Module 09 (Feature Flags, for tool registration gating).
+Module 03 (Facts/Conversation State), Module 05 (LLM engine, for the tool-calling loop), Module 07 (Plan shape), Module 09 (Feature Flags, for tool registration gating), Module 16 (Observability & Metrics — Tool Executor metrics calls).
 
 ## 5. Folder Structure
 ```
@@ -31,7 +31,6 @@ app/
 │   └── exceptions.py
 security_policies/
 ├── generate_quote.yaml
-├── create_ticket.yaml
 ├── retrieve_products.yaml
 ├── retrieve_docs.yaml
 ├── compare.yaml
@@ -85,13 +84,16 @@ CREATE TABLE tool_audit_log (
 - `ExecutionContext` — maintained by `execute_plan` for the lifetime of one plan execution:
   ```python
   class ExecutionContext(BaseModel):
-      results: dict[str, ToolExecutionResult] = {}
+      retrieve_products: ToolExecutionResult | None = None
+      retrieve_docs: ToolExecutionResult | None = None
+      generate_quote: ToolExecutionResult | None = None
+      create_lead: ToolExecutionResult | None = None
 
       def get_product_ids(self) -> list[UUID] | None:
-          r = self.results.get("retrieve_products")
+          r = self.retrieve_products
           return r.product_ids if r and r.success else None
   ```
-  `ExecutionContext` is initialized empty at the start of each `execute_plan` call. After each step succeeds, the step's `ToolExecutionResult` is stored at `context.results[step_name]`. The context is passed as the second argument to every tool implementation function.
+  `ExecutionContext` is initialized empty at the start of each `execute_plan` call. After each step succeeds, the step's `ToolExecutionResult` is stored at `context.retrieve_products = tool_result` (or the corresponding field matching the step name). The context is passed as the second argument to every tool implementation function. Exposing typed properties instead of generic dictionaries prevents key spelling bugs at compile time.
 
 ## 11. Repository Layer
 `ToolAuditLogRepository.create(entry) -> None` — append-only, mirrors `TurnsRepository`'s pattern (Module 04).
@@ -104,7 +106,7 @@ CREATE TABLE tool_audit_log (
    b. `policy = PolicyRegistry.get(step)`.
    c. `result = policy.check(intent=plan.intent, state=session.conversation_state, facts=session.facts)`.
    d. If not allowed: raise/record `PolicyViolationError` with `clause_failed`; if `policy.audit_log`, write to `tool_audit_log`; **do not execute** the tool; if step is in `CRITICAL_STEPS`, abort remaining steps; else continue.
-   e. If allowed: `tool_result = await tool_fn(session, context)` — the tool implementation receives both `session` and `context`; store `context.results[step] = tool_result`; if `audit_log`, write an "allowed" audit entry.
+   e. If allowed: `tool_result = await tool_fn(session, context)` — the tool implementation receives both `session` and `context`; store `setattr(context, step, tool_result)`; if `audit_log`, write an "allowed" audit entry.
 3. Return the list of `ToolExecutionResult` for the Orchestrator.
 
 **Plan-conformance check**: if the LLM emits a tool call for a step **not present in the current plan**, that call is rejected and logged as a `PlanViolationError` — distinct from a policy failure.
@@ -123,7 +125,7 @@ CREATE TABLE tool_audit_log (
 ## 15. Redis Keys
 | Key Pattern | TTL | Purpose |
 |---|---|---|
-| `ratelimit:{tenant_id}:{session_id}:{tool_name}` | matches the rate window (e.g., 60s for "5/min") | Sliding/fixed-window counter backing the `rate_limit` policy clause |
+| `rate_limit:tool:{tenant_id}:{session_id}:{tool_name}` | matches the rate window (e.g., 60s for "5/min") | Fixed-window counter backing the `rate_limit` policy clause |
 
 ## 16. API Endpoints
 None public — internal execution engine, invoked from the Orchestrator.
@@ -135,8 +137,8 @@ N/A.
 `ToolExecutionResult` list, folded into `OrchestratorResult.tool_calls` (Module 06) and `conversation_turns.tool_calls` (Module 04).
 
 ## 19. Business Logic
-- **Step criticality**: `CRITICAL_STEPS = frozenset({'generate_quote', 'create_lead', 'create_ticket'})` — defined as a module-level constant in `executor.py`. If a critical step fails policy or throws, all subsequent steps in the plan are aborted. Non-critical steps (`retrieve_products`, `retrieve_docs`, `compare`, `respond`, `request_missing_slots`) failing policy are logged but the plan continues.
-- **Rate limiting**: implemented as a **fixed-window** Redis counter per `(tenant_id, session_id, tool_name)`. Pattern: `INCR ratelimit:{tenant_id}:{session_id}:{tool_name}` — if the INCR return value is 1 (key did not exist), immediately call `EXPIRE ratelimit:... {window_seconds}` in the same pipeline. If the INCR return value exceeds the limit, raise `RateLimitExceededError`. Rate strings parsed from YAML `"N/unit"` format: `"5/min"` → window=60s, limit=5; `"3/min"` → window=60s, limit=3.
+- **Step criticality**: `CRITICAL_STEPS = frozenset({'generate_quote', 'create_lead'})` — defined as a module-level constant in `executor.py`. If a critical step fails policy or throws, all subsequent steps in the plan are aborted. Non-critical steps (`retrieve_products`, `retrieve_docs`, `compare`, `respond`, `request_missing_slots`) failing policy are logged but the plan continues.
+- **Rate limiting**: implemented as a **fixed-window** Redis counter per `(tenant_id, session_id, tool_name)`. Pattern: `INCR rate_limit:tool:{tenant_id}:{session_id}:{tool_name}` — if the INCR return value is 1 (key did not exist), immediately call `EXPIRE rate_limit:tool:... {window_seconds}` in the same pipeline. If the INCR return value exceeds the limit, raise `RateLimitExceededError`. Rate strings parsed from YAML `"N/unit"` format: `"5/min"` → window=60s, limit=5; `"3/min"` → window=60s, limit=3.
 - **Policy vs Plan are independently checked** — per architecture §3.
 - **YAML policy file format** (all six fields required; startup self-check verifies every registered tool has a corresponding file):
   ```yaml
@@ -156,7 +158,7 @@ N/A.
   ```
 
 ## 20. Validation Rules
-- Every YAML policy file must specify all five fields (`allowed_intents`, `required_state`, `required_slots`, `rate_limit`, `audit_log`) — a startup self-check verifies every registered tool has a corresponding policy file; a tool with no policy file fails startup.
+- Every YAML policy file must specify all six fields (`tool_name`, `allowed_intents`, `required_state`, `required_slots`, `rate_limit`, `audit_log`) — a startup self-check verifies every registered tool has a corresponding policy file; a tool with no policy file fails startup.
 - `required_state` values correspond to named predicates in `PREDICATE_REGISTRY` defined in `policy.py`:
   - `quote_slots_complete(facts, state) -> bool`: imported from `app.quotes.schemas` — checks `facts.company`, `facts.product_interest`, `facts.quantity`, and `facts.budget` are all non-None.
   - `contact_info_complete(facts, state) -> bool`: checks that at least one of `facts.contact_email` or `facts.contact_phone` is non-None.
@@ -250,3 +252,8 @@ In-process, one call per turn (after Planner, before turn recording), executing 
 - [ ] Audit log written for every `audit_log: true` tool, allowed or denied
 - [ ] Disabled tools (Module 09 flags) never appear in the LLM tool schema
 - [ ] Tests above pass
+
+## 33. Hardening Update: Deterministic Execution vs LLM Tool Calling
+Module 10 executes only the deterministic `Plan.steps` emitted by Module 07. The LLM never decides which business tools run. Ollama tool-calling support in Module 05 is used for structured classifier/extractor contracts and for model transport where explicitly documented; it is not a business-tool dispatcher.
+
+If an LLM response names a business tool that is not the current deterministic step, Module 10 treats it as prompt/model drift and records `PlanViolationError`; it does not execute that tool. The authoritative registered step list is Module 00 §16. `create_ticket` is reserved for a future ticket implementation and is not registered or emitted in v4.1. Redis keys, database tables, and startup validation ownership are Module 00 §9, §11, and §12.

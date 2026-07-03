@@ -205,3 +205,62 @@ Matches architecture §2.13 exactly:
 
 ## 33. Hardening Update: Canonical Interface and Prompt Names
 The canonical interface is `ClarificationFlow.run(tenant_id, session_id, intent_result, facts, state, flags) -> ClarificationResult` from Module 00 §5. The flow uses the already-resolved `FeatureFlags` object passed by Module 06; it does not call `FeatureFlagsService` itself. Prompt file names and fallback behavior are authoritative in Module 00 §8. Clarification exceeded behavior follows Module 00 §14 and routes to `escalation_request`.
+
+## 34. v4.2 Extension: New Clarification Templates
+
+The following template files are added to `prompt_library/clarification/` and registered in `TemplateLookup`:
+
+### Template: `wizard_requirement_collection.md`
+**Trigger candidates:** `['product_recommendation_wizard']`
+**Purpose:** Multi-turn wizard slot-fill when requirements are incomplete.
+**Questions (emitted one per turn):**
+1. "What is the primary use case? (e.g., networking, power, surveillance)"
+2. "How many users or devices need to be supported?"
+3. "What is your approximate budget range?"
+4. "What is your location or preferred delivery region?"
+5. "Do you have a preferred brand?"
+
+### Template: `compatibility_type_selection.md`
+**Trigger candidates:** `['product_compatibility']`
+**Purpose:** Asks which compatibility type the user is checking.
+**Options:**
+- UPS / Power compatibility
+- Battery compatibility
+- Controller compatibility
+- SFP / Transceiver compatibility
+- Rack / Enclosure compatibility
+
+### Template: `use_case_selection.md`
+**Trigger candidates:** `['use_case_recommendation']` when use-case not detected in Tier 1.
+**Purpose:** Asks the user to select their deployment context.
+**Options:**
+- School / Educational Institution
+- Hospital / Healthcare Facility
+- Office / SMB
+- Data Center
+- CCTV / Surveillance
+- Enterprise Network
+- SMB (Small & Medium Business)
+
+### Template: `handoff_type_selection.md`
+**Trigger candidates:** `['human_handoff']`
+**Purpose:** Asks which team the user wants to be connected to.
+**Options:**
+- Sales Team
+- Technical Engineer
+- Customer Support
+
+### TemplateLookup Registry Additions
+```python
+TEMPLATE_REGISTRY: dict[frozenset, str] = {
+    # v4.1 (existing)
+    frozenset({'sales_inquiry', 'technical_support'}):          'sales_vs_support.md',
+    frozenset({'sales_inquiry', 'quote_request'}):              'sales_vs_quote.md',
+    frozenset({'sales_inquiry', 'technical_support', 'quote_request'}): 'sales_vs_support_vs_quote.md',
+    # v4.2 (new)
+    frozenset({'product_recommendation_wizard'}):               'wizard_requirement_collection.md',
+    frozenset({'product_compatibility'}):                       'compatibility_type_selection.md',
+    frozenset({'use_case_recommendation'}):                     'use_case_selection.md',
+    frozenset({'human_handoff'}):                               'handoff_type_selection.md',
+}
+```

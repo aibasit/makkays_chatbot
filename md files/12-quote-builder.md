@@ -243,3 +243,54 @@ Invoked once per turn when `generate_quote` is both in-plan and policy-allowed, 
 
 ## 33. Hardening Update: Exception and Context Alignment
 The canonical missing-pricing exception is `PricingDataMissingError`. Quote narration uses `quotes/quote_explanation_v1.md` and Module 05 `build_llm_messages(...)`, not ad hoc prompt construction. Quote unavailability follows the user-visible degradation contract in Module 00 §14.
+
+## 34. v4.2 Extension: PDF Export & Email Delivery
+
+### 34.1 PDF Generation
+Add `QuotePDFGenerator` class to `app/quotes/builder.py`:
+```python
+class QuotePDFGenerator:
+    def generate(self, quote: QuoteResult) -> bytes:
+        """
+        Generates a PDF from a completed QuoteResult using the reportlab library.
+        Returns raw PDF bytes. Never calls LLM. All values come from the pre-computed QuoteResult.
+        """
+```
+Library: `reportlab` (added to `requirements.txt`). No CSS/HTML dependency.
+
+PDF layout includes:
+- Company name, quote ID, and date as header.
+- Line-items table: Product Name | Quantity | Unit Price | Subtotal.
+- Grand total row.
+- Footer: tenant brand name from settings.
+
+### 34.2 Database Column Addition
+```sql
+ALTER TABLE quotes ADD COLUMN pdf_bytes BYTEA;
+```
+`QuoteRepository.save_pdf(quote_id, pdf_bytes: bytes)` — writes the PDF bytes column after generation.
+
+### 34.3 Post-Generation Email Hook
+After `QuotePDFGenerator.generate(quote_result)` succeeds inside `QuoteBuilder.build(...)`:
+```python
+asyncio.create_task(
+    NotificationService.send_quote_pdf(
+        to_email=session.facts.contact_email,
+        quote_result=quote_result,
+        pdf_bytes=pdf_bytes,
+    )
+)
+```
+`NotificationService.send_quote_pdf` sends the PDF as an email attachment via Resend. Failures are swallowed and logged at `WARNING` — same pattern as lead notifications (Module 14). `to_email` is taken from `session.facts.contact_email`; if absent, email is skipped and a `DEBUG` log entry is written.
+
+### 34.4 New API Endpoint (owned by Module 15)
+```
+GET /quotes/{quote_id}/pdf
+```
+Returns `Content-Type: application/pdf`. Fetches `quotes.pdf_bytes` from the database. Returns 404 if quote does not exist or PDF was not yet generated.
+
+### 34.5 Completion Checklist Addition
+- [ ] `reportlab` installed and `QuotePDFGenerator.generate` produces valid PDF bytes
+- [ ] `quotes.pdf_bytes` column migration applied
+- [ ] PDF email dispatched via fire-and-forget task with email-absent guard
+- [ ] `GET /quotes/{quote_id}/pdf` returns correct content-type

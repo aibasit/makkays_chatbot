@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
+from sqlalchemy import create_engine, text
 
-from sqlalchemy import text
-
-from app.db.engine import make_migration_engine
 from app.dependencies import get_settings
 
 
@@ -49,25 +46,24 @@ WHERE NOT EXISTS (
 """
 
 
-async def seed_local_dev() -> None:
-    """Create the documented local CRM schema and seed DEFAULT_TENANT_ID once."""
+def seed_local_dev() -> None:
+    """Create the documented local CRM schema and seed DEFAULT_TENANT_ID once synchronously."""
     settings = get_settings()
-    engine = make_migration_engine(settings.db.supabase_db_url_async.get_secret_value())
-    async with engine.begin() as connection:
-        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
-        await connection.execute(text(CREATE_CRM_SCHEMA_SQL))
-        await connection.execute(
+    engine = create_engine(settings.db.supabase_db_url_sync.get_secret_value())
+    with engine.begin() as connection:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
+        connection.execute(text(CREATE_CRM_SCHEMA_SQL))
+        connection.execute(
             text(INSERT_LOCAL_DEV_LEAD_SQL),
             {"tenant_id": settings.db.default_tenant_id},
         )
-    await engine.dispose()
+    engine.dispose()
 
 
 def main() -> None:
     """Run the local development seed workflow."""
-    asyncio.run(seed_local_dev())
+    seed_local_dev()
 
 
 if __name__ == "__main__":
     main()
-

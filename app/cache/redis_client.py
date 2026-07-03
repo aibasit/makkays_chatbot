@@ -28,14 +28,21 @@ def validate_redis_url(redis_url: str) -> None:
 
 
 def initialize_redis(settings: Settings) -> Redis:
-    """Initialize the singleton Redis client without performing network I/O."""
+    """Initialize the singleton Redis client with production hardening."""
     global _redis_client
     if _redis_client is None:
         redis_url = settings.redis.redis_url.get_secret_value()
         validate_redis_url(redis_url)
         parsed = urlparse(redis_url)
         logger.info("Initializing Redis client host=%s db=%s", parsed.hostname, parsed.path.lstrip("/"))
-        _redis_client = Redis.from_url(redis_url, decode_responses=True)
+        # Avoid retry_on_timeout to prevent cascade latency spikes under outage
+        _redis_client = Redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
+            health_check_interval=30,
+        )
     return _redis_client
 
 
@@ -47,11 +54,14 @@ def get_redis() -> Redis:
 
 
 async def close_redis() -> None:
-    """Close the Redis client and reset the singleton."""
+    """Close the Redis client and reset the singleton safely."""
     global _redis_client
     if _redis_client is not None:
         logger.info("Closing Redis client")
-        await _redis_client.aclose()
+        try:
+            await _redis_client.aclose()
+        except Exception as exc:
+            logger.error("Error closing Redis client: %s", exc)
     _redis_client = None
 
 

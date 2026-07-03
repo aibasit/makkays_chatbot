@@ -79,6 +79,18 @@ def test_seed_local_dev_is_idempotent_and_uses_default_tenant_id() -> None:
     assert ":tenant_id" in seed_local_dev.INSERT_LOCAL_DEV_LEAD_SQL
 
 
+def test_hardened_engine_pool_settings(tmp_path) -> None:
+    """The database engine pool should be scaled and configured with timeouts."""
+    env_file = _write_env(tmp_path / ".env")
+    settings = Settings(_env_file=env_file)
+    engine = create_engine(settings)
+
+    assert engine.pool.size() == 20
+    assert engine.pool._max_overflow == 10
+    assert engine.pool._timeout == 5.0
+    assert engine.pool._recycle == 1800
+
+
 @pytest.fixture(autouse=True)
 async def _cleanup_engine() -> None:
     yield

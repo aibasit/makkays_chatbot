@@ -29,17 +29,26 @@ def validate_asyncpg_url(database_url: str) -> None:
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
-    """Create the configured async SQLAlchemy engine without connecting."""
+    """Create the configured async SQLAlchemy engine with production hardening."""
     database_url = settings.db.supabase_db_url_async.get_secret_value()
     validate_asyncpg_url(database_url)
     parsed = urlparse(database_url)
     redacted_host = parsed.hostname or "<unknown>"
-    logger.info("Creating async database engine host=%s pool_size=5 max_overflow=5", redacted_host)
+    logger.info(
+        "Creating async database engine host=%s pool_size=20 max_overflow=10 pool_timeout=5.0 pool_recycle=1800",
+        redacted_host,
+    )
     return create_async_engine(
         database_url,
-        pool_size=5,
-        max_overflow=5,
+        pool_size=20,
+        max_overflow=10,
+        pool_timeout=5.0,
+        pool_recycle=1800,
         pool_pre_ping=True,
+        connect_args={
+            "timeout": 5.0,         # connection timeout (seconds)
+            "command_timeout": 5.0, # statement timeout (seconds)
+        },
     )
 
 
@@ -91,11 +100,14 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def dispose_database() -> None:
-    """Dispose the async engine and reset database globals."""
+    """Dispose the async engine and reset database globals safely."""
     global _async_engine, _sessionmaker
     if _async_engine is not None:
         logger.info("Disposing async database engine")
-        await _async_engine.dispose()
+        try:
+            await _async_engine.dispose()
+        except Exception as exc:
+            logger.error("Error disposing database engine: %s", exc)
     _async_engine = None
     _sessionmaker = None
 

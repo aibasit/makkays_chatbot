@@ -10,6 +10,7 @@ from sqlalchemy import engine_from_config, pool
 from app.db.base import Base
 from app.dependencies import get_settings
 from app.session import models as session_models  # noqa: F401
+from app.turns import models as turns_models  # noqa: F401
 
 config = context.config
 

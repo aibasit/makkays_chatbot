@@ -24,11 +24,14 @@ Module 01 (lifespan hooks — `register_hooks(app, settings)` registers the APSc
 app/
 ├── crm/
 │   ├── __init__.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── repository.py
-│   ├── service.py
-│   ├── client.py
+│   ├── interfaces.py        (PEP 544 structural protocols for CRM service integrations)
+│   ├── models.py            (leads table and crm_leads table models)
+│   ├── schemas.py           (CRMLeadCreate, CRMLeadUpdate, CRMLeadResponse schemas)
+│   ├── repository.py        (CRMLeadRepository and LeadRepository logic)
+│   ├── service.py           (LocalCRMService and chatbot LeadService logic)
+│   ├── routes.py            (FastAPI endpoints for CRM CRUD)
+│   ├── dependencies.py      (Resolver factory using Settings to inject correct provider)
+│   ├── client.py            (stubs for external provider clients)
 │   ├── retry_worker.py
 │   └── exceptions.py
 ├── notifications/
@@ -51,42 +54,64 @@ tests/
 ## 7. Responsibility of Every File
 | File | Responsibility |
 |---|---|
-| `crm/models.py` | ORM models for `leads`, `retry_queue` |
-| `crm/schemas.py` | `LeadCreate`, `LeadRecord` |
-| `crm/repository.py` | CRUD for `leads` and `retry_queue` |
-| `crm/service.py` | `LeadService.create_lead(...)` — the `create_lead` plan-step entrypoint |
-| `crm/client.py` | Thin HTTP wrapper over the external CRM API (`CRM_API_BASE_URL`) |
+| `crm/interfaces.py` | `CRMService(Protocol)` — PEP 544 structural interface for lead lifecycle operations |
+| `crm/models.py` | ORM models for `leads`, `retry_queue` (chatbot tracker), and `crm_leads` (mock local CRM table) |
+| `crm/schemas.py` | `LeadCreate`, `LeadRecord` (chatbot); `CRMLeadCreate`, `CRMLeadUpdate`, `CRMLeadResponse` (CRM) |
+| `crm/repository.py` | `LeadRepository`, `RetryQueueRepository`, and `CRMLeadRepository` database layers |
+| `crm/service.py` | `LocalCRMService` (implements `CRMService` using PostgreSQL) and `LeadService` (chatbot tool wrapper) |
+| `crm/routes.py` | FastAPI HTTP router for leads management CRUD API endpoints |
+| `crm/dependencies.py` | Factory method resolver checking `Settings.crm.provider` to inject the active `CRMService` |
+| `crm/client.py` | Stubs and wrappers for external Salesforce/HubSpot client adapters |
 | `crm/retry_worker.py` | APScheduler job definition — periodically drains `retry_queue` |
 | `notifications/resend_client.py` | Thin wrapper over the Resend API |
 | `notifications/templates.py` | Plain-text/HTML email templates for "new lead" and "quote generated" |
 | `notifications/service.py` | `NotificationService.notify_new_lead(...)`, `.notify_quote_generated(...)` |
 
 ## 8. Classes
-- `Lead` (ORM), `RetryQueueEntry` (ORM).
-- `LeadRepository`, `RetryQueueRepository`.
-- `LeadService` — creates the lead, enqueues sync, triggers notification.
-- `CrmClient` — `async push_lead(lead: LeadRecord) -> bool`.
+- `Lead` (ORM), `RetryQueueEntry` (ORM), `CRMLead` (ORM).
+- `LeadRepository`, `RetryQueueRepository`, `CRMLeadRepository`.
+- `CRMService(Protocol)` — structural protocol:
+  ```python
+  class CRMService(Protocol):
+      async def create_lead(self, tenant_id: UUID, lead: CRMLeadCreate) -> CRMLeadResponse: ...
+      async def get_lead(self, tenant_id: UUID, lead_id: UUID) -> CRMLeadResponse | None: ...
+      async def list_leads(self, tenant_id: UUID) -> list[CRMLeadResponse]: ...
+      async def update_lead(self, tenant_id: UUID, lead_id: UUID, update: CRMLeadUpdate) -> CRMLeadResponse | None: ...
+      async def delete_lead(self, tenant_id: UUID, lead_id: UUID) -> bool: ...
+  ```
+- `LocalCRMService` — implements `CRMService` using PostgreSQL via SQLAlchemy sessions.
+- `LeadService` — chatbot tool orchestrator; calls the resolved `CRMService` instance rather than writing to database schemas directly.
+- `CrmClient` — adapters for pushing leads to external HTTP services when not in local provider mode.
 - `RetryWorker` — APScheduler-invoked function, drains due retries.
 - `ResendClient` — `async send(to, subject, html) -> bool`.
 - `NotificationService` — composes templates + calls `ResendClient`.
 
 ## 9. Data Models
-`Lead` (ORM, table `leads`): `id: UUID`, `tenant_id: UUID`, `session_id: str`,
-`company: str`, `contact_name: str | None`, `contact_email: str | None`,
-`contact_phone: str | None`, `facts_snapshot: JSONB` (copy of Facts at lead-creation time — durable even if Facts later change), `crm_synced: bool = false`,
-`crm_contact_id: str | None`, `created_at: timestamptz`.
+`Lead` (ORM, table `leads`): `id: UUID`, `tenant_id: UUID`, `session_id: str`, `company: str`, `contact_name: str | None`, `contact_email: str | None`, `contact_phone: str | None`, `facts_snapshot: JSONB`, `crm_synced: bool = false`, `crm_contact_id: str | None`, `created_at: timestamptz`.
 
-`RetryQueueEntry` (ORM, table `retry_queue`): `id: UUID`, `tenant_id: UUID`,
-`lead_id: UUID (fk)`, `attempt_count: int = 0`, `next_attempt_at: timestamptz`,
-`last_error: text | None`, `status: str` (`pending`/`succeeded`/`failed_permanently`), `created_at`, `updated_at`.
+`RetryQueueEntry` (ORM, table `retry_queue`): `id: UUID`, `tenant_id: UUID`, `lead_id: UUID (fk → leads.id)`, `attempt_count: int = 0`, `next_attempt_at: timestamptz`, `last_error: text | None`, `status: str`, `created_at`, `updated_at`.
+
+`CRMLead` (ORM, table `crm_leads`):
+`id: UUID`, `tenant_id: UUID`, `name: str`, `email: str`, `phone: str | None`, `company: str | None`, `product_interest: str | None`, `message: str | None`, `status: Literal['New', 'Contacted', 'Qualified', 'Closed']`, `assigned_to: str | None`, `created_at: timestamptz`, `updated_at: timestamptz`. Mixes in `TimestampMixin` and `TenantMixin` from Module 02.
 
 ## 10. Pydantic Schemas
 - `LeadCreate { company: str, contact_name: str | None, contact_email: str | None, contact_phone: str | None }`.
-- `LeadRecord` — full read model including `crm_synced`, `crm_contact_id`.
+- `LeadRecord` — chatbot full trace read model including `crm_synced` and `crm_contact_id`.
+- `CRMLeadCreate { name: str, email: EmailStr, phone: str | None = None, company: str | None = None, product_interest: str | None = None, message: str | None = None }`.
+- `CRMLeadUpdate { name: str | None = None, email: EmailStr | None = None, phone: str | None = None, company: str | None = None, product_interest: str | None = None, message: str | None = None, status: Literal['New', 'Contacted', 'Qualified', 'Closed'] | None = None, assigned_to: str | None = None }`.
+- `CRMLeadResponse { id: UUID, tenant_id: UUID, name: str, email: str, phone: str | None, company: str | None, product_interest: str | None, message: str | None, status: str, assigned_to: str | None, created_at: datetime, updated_at: datetime }`.
 
 ## 11. Repository Layer
 `LeadRepository`: `create(tenant_id, session_id, data) -> Lead`, `get(tenant_id, lead_id)`, `mark_synced(lead_id, crm_contact_id)`.
+
 `RetryQueueRepository`: `enqueue(tenant_id, lead_id, next_attempt_at)`, `get_due(limit) -> list[RetryQueueEntry]`, `mark_succeeded(id)`, `mark_failed(id, error, next_attempt_at)`, `mark_permanently_failed(id)`.
+
+`CRMLeadRepository` (exposes SQL backend query routines for CRM routing):
+- `async create(tenant_id, data: CRMLeadCreate) -> CRMLead` — inserts row, defaults status to `'New'`.
+- `async get_by_id(tenant_id, id: UUID) -> CRMLead | None` — retrieves by primary key.
+- `async list_all(tenant_id) -> list[CRMLead]` — list of leads.
+- `async update(tenant_id, id: UUID, data: CRMLeadUpdate) -> CRMLead | None` — updates fields in place, returns the modified row.
+- `async delete(tenant_id, id: UUID) -> bool` — issues delete statement, returns True if deleted.
 
 ## 12. Service Layer
 `LeadService.create_lead(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult`:
@@ -163,13 +188,39 @@ CREATE TABLE retry_queue (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_retry_queue_due ON retry_queue (status, next_attempt_at) WHERE status = 'pending';
+
+-- Mock Local CRM leads table
+CREATE TYPE lead_status AS ENUM ('New', 'Contacted', 'Qualified', 'Closed');
+
+CREATE TABLE crm_leads (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  phone TEXT,
+  company TEXT,
+  product_interest TEXT,
+  message TEXT,
+  status lead_status NOT NULL DEFAULT 'New',
+  assigned_to TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_crm_leads_tenant_status ON crm_leads (tenant_id, status);
 ```
 
 ## 15. Redis Keys
 `rate_limit:tool:{tenant_id}:{session_id}:create_lead` — reused rate-limit pattern from Module 10, backing `"3/min per session"`.
 
 ## 16. API Endpoints
-None public — `create_lead` invoked only via the plan step inside `/chat`. No standalone `/leads` HTTP endpoint in v4.1 scope.
+Endpoints for the local Mock CRM leads service:
+*   `POST /crm/leads` — Creates a lead record. Returns `CRMLeadResponse`.
+*   `GET /crm/leads/{id}` — Retrieves a lead record by ID. Returns 404 if missing.
+*   `GET /crm/leads` — Lists all lead records.
+*   `PUT /crm/leads/{id}` — Updates specific fields (e.g. status, assigned_to). Returns updated record.
+*   `DELETE /crm/leads/{id}` — Deletes a lead record. Returns `{"success": true}`.
+
+Note: The chatbot lead generation `create_lead` tool step is run inside `/chat` (M15), which invokes `LeadService.create_lead` internally. The chatbot never queries `/crm/leads` endpoints directly. Exposing these HTTP endpoints allows external administration interfaces or dashboard modules to browse or manage the local mock CRM data independently.
 
 ## 17. Request Models
 N/A (internal tool invocation).

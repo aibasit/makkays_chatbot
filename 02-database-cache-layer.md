@@ -76,6 +76,28 @@ N/A.
 ## 14. Database Tables
 None created directly by this module. It establishes the migration *mechanism* that every later module uses to create its own tables (e.g., Module 03 adds a migration for `session_facts` and `conversation_state`).
 
+For development under the local Mock CRM setup, the following schema is created in PostgreSQL:
+```sql
+CREATE TYPE lead_status AS ENUM ('New', 'Contacted', 'Qualified', 'Closed');
+
+CREATE TABLE crm_leads (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  phone TEXT,
+  company TEXT,
+  product_interest TEXT,
+  message TEXT,
+  status lead_status NOT NULL DEFAULT 'New',
+  assigned_to TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_crm_leads_tenant_status ON crm_leads (tenant_id, status);
+```
+
 ## 15. Redis Keys
 None directly — this module only provides the client. Namespacing convention documented here for all later modules to follow:
 ```

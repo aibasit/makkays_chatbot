@@ -22,11 +22,12 @@ committed — add `.env` to `.gitignore` on day one).
 | `QDRANT_API_KEY` | RAG Engine (M11) | Qdrant Cloud console → API Keys | Yes |
 | `REDIS_URL` | Session/State (M03), Rate limiting (M15) | Local Redis (Docker or native install), e.g. `redis://localhost:6379/0` | Yes |
 | `OLLAMA_HOST` | LLM Engine (M05) | Local Ollama install, default `http://localhost:11434` | Yes |
-| `OLLAMA_MODEL` | LLM Engine (M05) | Pulled locally: `ollama pull qwen3:4b` | Yes |
+| `OLLAMA_MODEL` | LLM Engine (M05) | Pulled locally: `ollama pull qwen2.5:3b` | Yes |
 | `RESEND_API_KEY` | Email Notifications (M14) | resend.com → API Keys | Yes (for lead/quote email notifications) |
 | `RESEND_FROM_EMAIL` | Email Notifications (M14) | A domain verified in Resend | Yes |
 | `CRM_API_BASE_URL` | CRM Integration (M14) | Your CRM provider's API docs | Yes (stub/mock acceptable for local dev) |
 | `CRM_API_KEY` | CRM Integration (M14) | CRM provider dashboard | Yes (stub/mock acceptable for local dev) |
+| `CRM_PROVIDER` | CRM Integration (M14) | CRM provider type (`local` or external provider names) | Yes (use `local` for mock CRM) |
 | `SITE_API_KEY` | Public API (M15) | Self-generated (`openssl rand -hex 32`) — this is a key **you** issue to your own frontend widget, not a third-party key | Yes |
 | `DEFAULT_TENANT_ID` | Multi-tenancy foundation, all tables | Self-defined UUID, e.g. `00000000-0000-0000-0000-000000000001` | Yes |
 | `OLLAMA_TIMEOUT_SECONDS` | LLM Engine (M05) | Integer seconds; default `30`. Increase on slow hardware. | No (has safe default) |
@@ -57,7 +58,7 @@ REDIS_URL=redis://localhost:6379/0
 
 # --- LLM ---
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen3:4b
+OLLAMA_MODEL=qwen2.5:3b
 
 # --- Embeddings ---
 EMBEDDING_MODEL=BAAI/bge-m3
@@ -123,7 +124,7 @@ rather than folders.
 | 02 | Database & Cache Layer | `02-database-cache-layer.md` |
 | 03 | Session & State Management (Facts vs Conversation State) | `03-session-state-management.md` |
 | 04 | Conversation Turns & Structured Logging | `04-conversation-turns-logging.md` |
-| 05 | LLM Engine (Ollama / Qwen3 Tool-Calling Loop) | `05-llm-engine-ollama.md` |
+| 05 | LLM Engine (Ollama / Qwen2.5 Tool-Calling Loop) | `05-llm-engine-ollama.md` |
 | 06 | Router & Hybrid Intent Classification | `06-router-intent-classification.md` |
 | 07 | Task Planner | `07-task-planner.md` |
 | 08 | Prompt Manager | `08-prompt-manager.md` |

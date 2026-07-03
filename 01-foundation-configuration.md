@@ -139,7 +139,7 @@ qdrant: QdrantSettings (url, api_key)
 ollama: OllamaSettings (host, model, timeout_seconds: int = 30)
 embedding: EmbeddingSettings (model_name)
 resend: ResendSettings (api_key, from_email)
-crm: CrmSettings (base_url, api_key, max_retry_attempts: int = 5,
+crm: CrmSettings (provider: str = "local", base_url, api_key, max_retry_attempts: int = 5,
                    retry_worker_interval_seconds: int = 60)
 site: SiteSettings (site_api_key,
                     cors_allow_origins: list[str] = ["http://localhost:5173"],

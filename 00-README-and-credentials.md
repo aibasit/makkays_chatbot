@@ -131,12 +131,17 @@ rather than folders.
 | 09 | Feature Flags | `09-feature-flags.md` |
 | 10 | Security Policy Registry & Tool Executor | `10-security-policy-tool-executor.md` |
 | 11 | RAG Engine (Layered Retrieval, BGE-M3, Qdrant) | `11-rag-engine.md` |
-| 12 | Quote Builder | `12-quote-builder.md` |
+| 12 | Quote Builder & PDF Export | `12-quote-builder.md` |
 | 13 | Clarification Template Library | `13-clarification-templates.md` |
 | 14 | CRM Integration, Retry Queue & Email (Resend) | `14-crm-integration-email-retry.md` |
 | 15 | Public API & Widget Session | `15-public-api-widget-session.md` |
 | 16 | Observability (Logs vs Metrics, local) | `16-observability-metrics.md` |
 | 17 | Frontend Application (React/TS/Vite widget) | `17-frontend-application.md` |
+| 18 | Product Intelligence Service | `18-product-intelligence.md` |
+| 19 | Solution Builder & Recommendation Wizard | `19-solution-builder.md` |
+| 20 | Human Handoff & Extended Lead Qualification | `20-human-handoff.md` |
+| 21 | Multi-language Support (EN/UR/AR) | `21-multi-language.md` |
+| 22 | Availability & ERP Bridge | `22-availability-erp-bridge.md` |
 
 Each module document uses the same 32-section template so any engineer can jump into
 any module file and know exactly where to find a given piece of information.

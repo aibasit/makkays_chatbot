@@ -45,8 +45,34 @@ tests/
 | `service.py` | `FeatureFlagsService.resolve(tenant_id) -> FeatureFlags` — merges env defaults with DB overrides |
 
 ## 8. Classes
-- `FeatureFlags { enable_rag, enable_quotes, enable_crm, enable_tickets, enable_image_upload, enable_llm_clarification_rewrite: bool }`.
-- `FeatureFlagsRepository` — thin read (and admin-only write, out of HTTP scope for v4.1) over the `feature_flags` table.
+- `FeatureFlags` — full set of flag fields (v4.1 + v4.2):
+  ```python
+  class FeatureFlags(BaseModel):
+      # v4.1 flags
+      enable_rag: bool = True
+      enable_quotes: bool = True
+      enable_crm: bool = True
+      enable_tickets: bool = True
+      enable_image_upload: bool = False
+      enable_llm_clarification_rewrite: bool = False
+      # v4.2 — Product Intelligence
+      enable_product_comparison: bool = True
+      enable_compatibility_check: bool = True
+      enable_accessory_recommendation: bool = True
+      enable_pdf_search: bool = True
+      # v4.2 — Solution & Wizard
+      enable_solution_builder: bool = True
+      enable_wizard: bool = True
+      enable_use_case_recommendation: bool = True
+      # v4.2 — Transactional & Ops
+      enable_human_handoff: bool = True
+      enable_availability_check: bool = False
+      enable_multi_language: bool = False
+      # v4.2 — Future Extension Stubs (always False)
+      enable_voice_chat: bool = False
+      enable_image_understanding: bool = False
+  ```
+- `FeatureFlagsRepository` — thin read (and admin-only write, out of HTTP scope) over the `feature_flags` table.
 - `FeatureFlagsService` — resolves precedence: DB row (if present for a given tenant+flag) overrides the env-var default.
 
 ## 9. Data Models
@@ -99,8 +125,25 @@ N/A (internal `FeatureFlags` object only).
 - Env defaults exist so the system works correctly with **zero rows** in `feature_flags` — the DB table is purely an override mechanism, never a required source of truth.
 
 ## 20. Validation Rules
-- Valid flag names are defined as: `VALID_FLAG_NAMES: frozenset[str] = frozenset({'enable_rag', 'enable_quotes', 'enable_crm', 'enable_tickets', 'enable_image_upload', 'enable_llm_clarification_rewrite'})`. This constant is defined in `schemas.py` and used by the repository layer to filter DB rows before merging into `FeatureFlags`. Unrecognized `flag_name` values from the DB are silently ignored.
+- Valid flag names are defined as `VALID_FLAG_NAMES: frozenset[str]` in `schemas.py`. This constant is used by the repository layer to filter DB rows before merging into `FeatureFlags`. Unrecognized `flag_name` values from the DB are silently ignored.
+  ```python
+  VALID_FLAG_NAMES: frozenset[str] = frozenset({
+      # v4.1
+      'enable_rag', 'enable_quotes', 'enable_crm', 'enable_tickets',
+      'enable_image_upload', 'enable_llm_clarification_rewrite',
+      # v4.2 — Product Intelligence
+      'enable_product_comparison', 'enable_compatibility_check',
+      'enable_accessory_recommendation', 'enable_pdf_search',
+      # v4.2 — Solution & Wizard
+      'enable_solution_builder', 'enable_wizard', 'enable_use_case_recommendation',
+      # v4.2 — Transactional & Ops
+      'enable_human_handoff', 'enable_availability_check', 'enable_multi_language',
+      # v4.2 — Future Stubs
+      'enable_voice_chat', 'enable_image_understanding',
+  })
+  ```
 - A `flag_value` that is not a valid boolean string (`"true"`, `"false"`, `"1"`, `"0"`) logs `WARNING` and is ignored (not merged).
+- `enable_voice_chat` and `enable_image_understanding` are always forced to `False` regardless of DB or env value — they are reserved stubs only.
 
 ## 21. Error Handling
 | Error | Handling |
@@ -126,7 +169,15 @@ N/A (internal `FeatureFlags` object only).
 `Settings.flags` (Module 01) provides the six env-driven defaults listed in Module 00 §1.1.
 
 ## 26. Environment Variables
-`ENABLE_RAG`, `ENABLE_QUOTES`, `ENABLE_CRM`, `ENABLE_TICKETS`, `ENABLE_IMAGE_UPLOAD`, `ENABLE_LLM_CLARIFICATION_REWRITE` (already defined in Module 00).
+**v4.1:** `ENABLE_RAG`, `ENABLE_QUOTES`, `ENABLE_CRM`, `ENABLE_TICKETS`, `ENABLE_IMAGE_UPLOAD`, `ENABLE_LLM_CLARIFICATION_REWRITE`.
+
+**v4.2 — Product Intelligence:** `ENABLE_PRODUCT_COMPARISON`, `ENABLE_COMPATIBILITY_CHECK`, `ENABLE_ACCESSORY_RECOMMENDATION`, `ENABLE_PDF_SEARCH`.
+
+**v4.2 — Solution & Wizard:** `ENABLE_SOLUTION_BUILDER`, `ENABLE_WIZARD`, `ENABLE_USE_CASE_RECOMMENDATION`.
+
+**v4.2 — Transactional & Ops:** `ENABLE_HUMAN_HANDOFF`, `ENABLE_AVAILABILITY_CHECK`, `ENABLE_MULTI_LANGUAGE`.
+
+**v4.2 — Future Stubs:** `ENABLE_VOICE_CHAT=false`, `ENABLE_IMAGE_UNDERSTANDING=false` (reserved; always overridden to False at runtime).
 
 ## 27. Sequence Diagram
 ```
@@ -162,10 +213,11 @@ In-process, resolved once near the start of `Orchestrator.on_turn`, threaded thr
 - Redis-backed shared cache if the app ever runs as multiple local processes.
 
 ## 32. Completion Checklist
-- [ ] Six flags resolvable from env with correct defaults
+- [ ] All 22 flags resolvable from env with correct defaults
 - [ ] DB override table created and takes precedence when present
 - [ ] Planner and Tool Executor both consult flags independently (defense in depth)
 - [ ] DB failure never blocks a turn (falls back to env)
+- [ ] `enable_voice_chat` and `enable_image_understanding` forced to False regardless of override
 - [ ] Tests above pass
 
 ## 33. Hardening Update: Canonical Registry References

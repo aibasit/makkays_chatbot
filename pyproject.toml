@@ -27,6 +27,9 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+markers = [
+    "stress: mark test as a stress test"
+]
 
 [tool.ruff]
 line-length = 100

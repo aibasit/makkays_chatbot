@@ -26,7 +26,7 @@ async def _check_infra_available() -> None:
             await session.execute(text("SELECT 1"))
         await redis.ping()
     except Exception as exc:
-        pytest.skip(f"Configured Postgres/Redis is not reachable: {exc}")
+        raise RuntimeError(f"Configured Postgres/Redis is not reachable: {exc}. Ensure Docker Compose stack is running.") from exc
 
 
 async def _ensure_tables() -> None:

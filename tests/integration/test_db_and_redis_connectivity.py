@@ -23,7 +23,7 @@ async def _check_db_available() -> None:
         async for session in get_db_session():
             await session.execute(text("SELECT 1"))
     except Exception as exc:
-        pytest.skip(f"Configured database is not reachable: {exc}")
+        raise RuntimeError(f"Configured database is not reachable: {exc}. Ensure Docker Compose stack is running.") from exc
 
 
 async def _check_redis_available() -> None:
@@ -32,7 +32,7 @@ async def _check_redis_available() -> None:
     try:
         await redis.ping()
     except Exception as exc:
-        pytest.skip(f"Configured Redis is not reachable: {exc}")
+        raise RuntimeError(f"Configured Redis is not reachable: {exc}. Ensure Docker Compose stack is running.") from exc
 
 
 async def _drop_table(table_name: str) -> None:

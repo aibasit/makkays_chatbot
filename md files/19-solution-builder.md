@@ -67,11 +67,52 @@ async def advance(session: SessionContext, user_message: str) -> WizardStep:
 Wizard Questions (in order):
 1. `use_case` — "What is the primary use case? (networking / power / surveillance / mixed)"
 2. `device_count` — "How many devices or users need to be supported?"
-3. `budget` — "What is your approximate budget in USD?"
+3. `project_size` — **Auto-detected from `device_count` after Step 2 — no question asked.** (see §8a Scale Classifier)
 4. `location` — "What is your location or preferred delivery region?"
 5. `brand_preference` — "Do you have a preferred brand? (optional — press Enter to skip)"
 
-When all 5 slots are filled: calls `BOMService.build(requirements, tenant_id)` and marks wizard session `completed=True`.
+> **Budget is never collected from the user.** For `small`/`medium` projects, BOM pricing is computed deterministically from the `product_pricing` table and presented as a fixed estimate. For `large`/`enterprise` projects, pricing is marked **"Call for Pricing"** and the wizard routes to the sales handoff pipeline instead of computing a total.
+
+When all required slots are filled: `WizardService.advance` calls `ScaleClassifier.classify(device_count)` → if `pricing_mode = 'call_for_pricing'` → triggers `SalesLeadService.create_from_wizard(requirements)` and returns `WizardStep(is_complete=True, pricing_mode='call_for_pricing', handoff_reference=...)`. Otherwise → calls `BOMService.build(requirements, tenant_id)` and marks `wizard_sessions.completed=True`.
+
+### §8a — Scale Classifier (new)
+```python
+class ScaleClassifier:
+    """
+    Determines pricing mode based on device_count and use_case.
+    Runs automatically after step 2 (device_count) is collected.
+    Never shown to the user — internal classification only.
+    """
+    # Thresholds — configurable via settings.solution_builder
+    LARGE_DEVICE_THRESHOLD: int = 500      # >= 500 devices → large
+    ENTERPRISE_DEVICE_THRESHOLD: int = 1000 # >= 1000 devices → enterprise
+
+    # Enterprise use cases always trigger call_for_pricing regardless of count
+    ENTERPRISE_USE_CASES: frozenset[str] = frozenset({
+        'data_center', 'enterprise', 'isp', 'carrier', 'government'
+    })
+
+    @classmethod
+    def classify(cls, device_count: int, use_case: str) -> ProjectScale:
+        """
+        Returns ProjectScale(size, pricing_mode).
+
+        Pricing mode rules (evaluated top-down, first match wins):
+        1. use_case in ENTERPRISE_USE_CASES → 'enterprise' / 'call_for_pricing'
+        2. device_count >= ENTERPRISE_DEVICE_THRESHOLD → 'enterprise' / 'call_for_pricing'
+        3. device_count >= LARGE_DEVICE_THRESHOLD → 'large' / 'call_for_pricing'
+        4. device_count >= 100 → 'medium' / 'calculated'
+        5. else → 'small' / 'calculated'
+        """
+```
+
+`ProjectScale` is a Pydantic model: `{ size: str, pricing_mode: Literal['calculated', 'call_for_pricing'] }`.
+
+**Why no budget question?**
+- For `small`/`medium` scales: the actual product prices from `product_pricing` are the authoritative source — asking the user for a budget would only filter results incorrectly.
+- For `large`/`enterprise` scales: catalogue pricing cannot accurately represent volume discounts, custom SLAs, installation costs, or bundled support contracts. Presenting a flat BOM total would be misleading. The correct commercial response is to route to a sales engineer who can produce a proper enterprise quotation.
+
+When all 4 required slots are filled: calls `ScaleClassifier.classify()` and marks wizard session `completed=True`.
 
 ### `UseCaseService`
 ```python
@@ -91,17 +132,56 @@ Default profiles seeded for: `school`, `hospital`, `office`, `data_center`, `cct
 def build(requirements: WizardRequirements, tenant_id: UUID) -> Solution:
     """
     Pure deterministic function — no LLM, no async.
+    Called ONLY when pricing_mode == 'calculated' (small/medium projects).
+    NEVER called when pricing_mode == 'call_for_pricing'.
+
     1. Maps requirements to product categories via requirement → category mapping.
-    2. SQL query: find products per category matching budget constraints.
+    2. SQL query: find products per category.
     3. Join with product_pricing table to get unit prices.
     4. Compute quantities per category from device_count / standard ratios.
     5. Assemble BOMLineItem list with subtotals.
     6. Sum to total_estimate.
-    7. Return Solution(line_items, total_estimate, currency='USD').
+    7. Return Solution(line_items, total_estimate, pricing_mode='calculated', currency='USD').
     """
 ```
 
-This is a pure synchronous function called with `run_in_executor` if needed.
+`BOMService.build` raises `InsufficientProductDataError` if called for an enterprise/large project — callers must check `pricing_mode` before calling.
+
+### `CallForPricingService` (new — `app/solution_builder/call_for_pricing_service.py`)
+```python
+class CallForPricingService:
+    """
+    Handles the 'call_for_pricing' path for large/enterprise projects.
+    Called instead of BOMService.build() when ScaleClassifier.classify()
+    returns pricing_mode='call_for_pricing'.
+    """
+    async def handle(
+        self,
+        requirements: WizardRequirements,
+        scale: ProjectScale,
+        session: SessionContext,
+        crm_service: CRMService,
+    ) -> CallForPricingResult:
+        """
+        1. Create a lead in CRM with requirements as qualification data.
+           - Sets lead.project_size = scale.size
+           - Sets lead.notes = 'Large/Enterprise wizard — call for pricing'
+        2. Dispatch handoff notification email to sales team (fire-and-forget).
+        3. Return CallForPricingResult with:
+           - reference_id: str (e.g. 'CFP-20260703-001')
+           - message: str (user-facing explanation)
+           - requirements_summary: str (what was collected)
+        """
+```
+
+**Response message template** (`prompt_library/solution/call_for_pricing_v1.md`):
+> *"Thank you for sharing your requirements. Based on the scale of your project ({device_count}+ devices, {use_case} deployment), our standard pricing catalogue doesn't fully reflect the volume discounts, installation services, and support packages available for projects of this size.*
+>
+> *I've created a priority inquiry for our enterprise sales team. Reference: {reference_id}. A sales engineer will contact you within 1 business day to discuss a custom quotation.*
+>
+> *What you've shared so far: {requirements_summary}"*
+
+This message is template-rendered — LLM is **not** used to generate it (no hallucination risk on the reference ID or contact promise).
 
 ### `SolutionExplainer`
 ```python
@@ -158,12 +238,26 @@ CREATE TABLE solutions (
 
 ## 10. Pydantic Schemas
 ```python
+```python
+class ProjectScale(BaseModel):
+    size: Literal['small', 'medium', 'large', 'enterprise']
+    pricing_mode: Literal['calculated', 'call_for_pricing']
+    reason: str  # human-readable: 'device_count >= 500', 'enterprise use case'
+
 class WizardRequirements(BaseModel):
     use_case: str | None = None
     device_count: int | None = None
-    budget: Decimal | None = None
+    # budget field REMOVED — pricing is either calculated from DB or call_for_pricing
+    project_size: ProjectScale | None = None   # auto-populated by ScaleClassifier
     location: str | None = None
     brand_preference: str | None = None
+
+class CallForPricingResult(BaseModel):
+    reference_id: str               # e.g. 'CFP-20260703-001'
+    scale: ProjectScale
+    requirements_summary: str       # formatted list of collected requirements
+    message: str                    # user-facing response from template
+    lead_id: UUID                   # CRM lead ID created
 
 class WizardStep(BaseModel):
     step_number: int

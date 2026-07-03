@@ -27,8 +27,9 @@ services:
 
   ollama:
     image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    container_name: ollama
+    expose:
+      - "11434"
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -49,6 +50,7 @@ services:
       - QDRANT_API_KEY=mock-key
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:3b
+      - OLLAMA_TIMEOUT_SECONDS=30
       - EMBEDDING_MODEL=BAAI/bge-m3
       - RESEND_API_KEY=mock-key
       - RESEND_FROM_EMAIL=mock@example.com
@@ -65,4 +67,3 @@ services:
 
 volumes:
   ollama_data:
-

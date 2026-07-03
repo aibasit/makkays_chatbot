@@ -6,7 +6,6 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
 import pytest
 
 from app.dependencies import get_settings
@@ -19,6 +18,7 @@ from app.llm.tool_schema import build_tool_schema
 async def _require_ollama_model() -> None:
     settings = get_settings()
     from app.llm.health import verify_ollama_status
+
     available, model_exists = await verify_ollama_status(settings)
     if not available:
         pytest.skip(f"Ollama is unavailable at {settings.ollama.host}")
@@ -80,7 +80,6 @@ async def test_tool_calling_roundtrip_returns_tool_calls() -> None:
 
 @pytest.mark.asyncio
 async def test_timeout_raises_llm_timeout_error() -> None:
-    await _require_ollama_model()
     class SlowOllamaClient(OllamaClient):
         async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
             await asyncio.sleep(0.05)

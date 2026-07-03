@@ -97,6 +97,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Verify Ollama availability and model existence on startup
         try:
             from app.llm.health import verify_ollama_status
+
             available, model_exists = await verify_ollama_status(settings)
             if not available:
                 logger.warning(
@@ -107,7 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 logger.warning(
                     "WARNING: Configured Ollama model '%s' is missing on the Ollama server at %s. "
                     "Please pull the model manually by running:\n"
-                    "docker compose exec ollama ollama pull %s",
+                    "docker exec -it ollama ollama pull %s",
                     settings.ollama.model,
                     settings.ollama.host,
                     settings.ollama.model,

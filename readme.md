@@ -546,3 +546,52 @@ Planner tests must assert only emitted steps that are registered v4.1 tools:
 `request_missing_slots`, `create_lead`, and `respond`. `create_ticket` is a
 reserved future tool gated by `ENABLE_TICKETS`; no v4.1 Planner rule may emit it
 until a ticket implementation module is documented.
+
+---
+
+## 17. Ollama Integration (Docker-First)
+
+This project integrates a real Ollama LLM service running inside the Docker Compose network for local development and testing. 
+
+### Starting the Docker Compose Stack
+To rebuild the containers and launch the database, cache, and Ollama services in the background:
+```bash
+docker compose up -d --build
+```
+This command starts all required services including the `ollama` service.
+
+### Pulling the Model (One-Time Setup)
+By default, the Ollama service starts up without any models installed. You must manually pull the `qwen2.5:3b` model:
+```bash
+docker compose exec ollama ollama pull qwen2.5:3b
+```
+The model will download inside the container. Because the `ollama` service is configured with a persistent Docker volume (`ollama_data` mapped to `/root/.ollama`), the model data will survive container recreation, system restarts, and Docker Compose down cycles. You only need to run this command once.
+
+### Verifying Installed Models
+To list the models currently installed and available inside your local Ollama container, run:
+```bash
+docker compose exec ollama ollama list
+```
+You should see `qwen2.5:3b` in the printed list.
+
+### Running the LLM Integration Tests
+To run the integration tests targeting the local Ollama instance inside the Docker environment, execute:
+```bash
+docker compose run --rm backend pytest tests/integration/test_llm_ollama_roundtrip.py
+```
+> [!NOTE]
+> If Ollama is unreachable or the `qwen2.5:3b` model has not been pulled, the Ollama-specific integration tests will be skipped automatically with a clear explanation, leaving other tests unaffected.
+
+### GPU Acceleration & Production Enhancements (Future Deployments)
+For production deployments or systems with compatible GPUs:
+1. **GPU Passthrough**: You can configure GPU passthrough for Ollama in Docker by adding the `deploy` reservations block to the `ollama` service in `docker-compose.yml`:
+   ```yaml
+   deploy:
+     resources:
+       reservations:
+         devices:
+           - driver: nvidia
+             count: all
+             capabilities: [gpu]
+   ```
+2. **NVIDIA Container Toolkit**: Running the container with GPU acceleration requires the NVIDIA Container Toolkit to be installed on the host operating system.

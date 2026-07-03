@@ -62,10 +62,7 @@ class RedactedModel(BaseModel):
 
     def redacted_dict(self) -> dict[str, Any]:
         """Return model data with sensitive fields redacted."""
-        return {
-            name: _redact_value(name, getattr(self, name))
-            for name in type(self).model_fields
-        }
+        return {name: _redact_value(name, getattr(self, name)) for name in type(self).model_fields}
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.redacted_dict()!r})"
@@ -89,7 +86,11 @@ class DbSettings(RedactedModel):
         if isinstance(data, dict):
             db_url = data.get("supabase_db_url")
             if db_url is not None:
-                raw_url = db_url.get_secret_value() if hasattr(db_url, "get_secret_value") else str(db_url)
+                raw_url = (
+                    db_url.get_secret_value()
+                    if hasattr(db_url, "get_secret_value")
+                    else str(db_url)
+                )
                 if raw_url.startswith("postgresql+asyncpg://"):
                     async_url = raw_url
                     sync_url = raw_url.replace("postgresql+asyncpg://", "postgresql://", 1)
@@ -97,8 +98,10 @@ class DbSettings(RedactedModel):
                     sync_url = raw_url
                     async_url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
                 else:
-                    raise ValueError("SUPABASE_DB_URL must use postgresql:// or postgresql+asyncpg:// scheme")
-                
+                    raise ValueError(
+                        "SUPABASE_DB_URL must use postgresql:// or postgresql+asyncpg:// scheme"
+                    )
+
                 data.setdefault("supabase_db_url_async", async_url)
                 data.setdefault("supabase_db_url_sync", sync_url)
         return data
@@ -109,7 +112,9 @@ class DbSettings(RedactedModel):
         """Ensure the database URL uses either postgresql:// or postgresql+asyncpg:// scheme."""
         raw_url = value.get_secret_value()
         if not (raw_url.startswith("postgresql://") or raw_url.startswith("postgresql+asyncpg://")):
-            raise ValueError("SUPABASE_DB_URL must use postgresql:// or postgresql+asyncpg:// scheme")
+            raise ValueError(
+                "SUPABASE_DB_URL must use postgresql:// or postgresql+asyncpg:// scheme"
+            )
         return value
 
     @field_validator("supabase_db_url_async")
@@ -158,7 +163,8 @@ class OllamaSettings(RedactedModel):
 
     host: str
     model: str
-    timeout_seconds: int = 30
+    timeout_seconds: float = 30.0
+    default_temperature: float = 0.0
 
 
 class EmbeddingSettings(RedactedModel):
@@ -270,6 +276,10 @@ class _FlatSettings(BaseSettings):
     redis_url: SecretStr = Field(validation_alias="REDIS_URL")
     ollama_host: str = Field(validation_alias="OLLAMA_HOST")
     ollama_model: str = Field(validation_alias="OLLAMA_MODEL")
+    ollama_default_temperature: float = Field(
+        default=0.0,
+        validation_alias="OLLAMA_DEFAULT_TEMPERATURE",
+    )
     embedding_model: str = Field(validation_alias="EMBEDDING_MODEL")
     resend_api_key: SecretStr = Field(validation_alias="RESEND_API_KEY")
     resend_from_email: str = Field(validation_alias="RESEND_FROM_EMAIL")
@@ -286,13 +296,17 @@ class _FlatSettings(BaseSettings):
         default=False,
         validation_alias="ENABLE_LLM_CLARIFICATION_REWRITE",
     )
-    ollama_timeout_seconds: int = Field(default=30, validation_alias="OLLAMA_TIMEOUT_SECONDS")
+    ollama_timeout_seconds: float = Field(default=30.0, validation_alias="OLLAMA_TIMEOUT_SECONDS")
     classification_confidence_threshold: float = Field(
         default=0.70,
         validation_alias="CLASSIFICATION_CONFIDENCE_THRESHOLD",
     )
-    prompt_library_path: str = Field(default="./prompt_library", validation_alias="PROMPT_LIBRARY_PATH")
-    security_policy_dir: str = Field(default="./security_policies", validation_alias="SECURITY_POLICY_DIR")
+    prompt_library_path: str = Field(
+        default="./prompt_library", validation_alias="PROMPT_LIBRARY_PATH"
+    )
+    security_policy_dir: str = Field(
+        default="./security_policies", validation_alias="SECURITY_POLICY_DIR"
+    )
     cors_allow_origins: str = Field(
         default="http://localhost:5173",
         validation_alias="CORS_ALLOW_ORIGINS",
@@ -310,7 +324,9 @@ class _FlatSettings(BaseSettings):
         default=60,
         validation_alias="CRM_RETRY_WORKER_INTERVAL_SECONDS",
     )
-    chat_rate_limit_per_minute: int = Field(default=20, validation_alias="CHAT_RATE_LIMIT_PER_MINUTE")
+    chat_rate_limit_per_minute: int = Field(
+        default=20, validation_alias="CHAT_RATE_LIMIT_PER_MINUTE"
+    )
     max_message_length: int = Field(default=4000, validation_alias="MAX_MESSAGE_LENGTH")
 
 
@@ -355,6 +371,7 @@ class Settings(BaseSettings):
                 host=flat.ollama_host,
                 model=flat.ollama_model,
                 timeout_seconds=flat.ollama_timeout_seconds,
+                default_temperature=flat.ollama_default_temperature,
             ),
             embedding=EmbeddingSettings(model_name=flat.embedding_model),
             resend=ResendSettings(api_key=flat.resend_api_key, from_email=flat.resend_from_email),
@@ -397,10 +414,7 @@ class Settings(BaseSettings):
 
     def redacted_dict(self) -> dict[str, Any]:
         """Return grouped settings with sensitive values redacted."""
-        return {
-            name: _redact_value(name, getattr(self, name))
-            for name in type(self).model_fields
-        }
+        return {name: _redact_value(name, getattr(self, name)) for name in type(self).model_fields}
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.redacted_dict()!r})"

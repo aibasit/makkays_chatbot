@@ -3,7 +3,6 @@ version: '3.8'
 services:
   test-postgres:
     image: postgres:16-alpine
-    container_name: makkays-test-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: secret-db
@@ -18,7 +17,6 @@ services:
 
   test-redis:
     image: redis:7-alpine
-    container_name: makkays-test-redis
     ports:
       - "6379:6379"
     healthcheck:
@@ -27,18 +25,29 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: makkays-chatbot-backend
     environment:
       - SUPABASE_DB_URL=postgresql+asyncpg://postgres:secret-db@test-postgres:5432/postgres
       - REDIS_URL=redis://test-redis:6379/0
       - DEFAULT_TENANT_ID=00000000-0000-0000-0000-000000000001
       - QDRANT_URL=https://qdrant.example.com
       - QDRANT_API_KEY=mock-key
-      - OLLAMA_HOST=http://mock-ollama:11434
+      - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:3b
       - EMBEDDING_MODEL=BAAI/bge-m3
       - RESEND_API_KEY=mock-key
@@ -51,3 +60,9 @@ services:
         condition: service_healthy
       test-redis:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+volumes:
+  ollama_data:
+

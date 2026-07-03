@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 # Install development/test dependencies
-RUN pip install --no-cache-dir pytest pytest-asyncio httpx psycopg2-binary
+RUN pip install --no-cache-dir pytest pytest-asyncio httpx psycopg2-binary ruff
 
 # Copy the application source code
 COPY . .

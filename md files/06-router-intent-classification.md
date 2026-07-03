@@ -1,4 +1,4 @@
-﻿# Module 06 — Router & Hybrid Intent Classification
+# Module 06 — Router & Hybrid Intent Classification
 
 ## 1. Module Name
 `router` — Tier 1 deterministic rules + Tier 2 LLM `classify_intent`, confidence gating, Orchestrator entrypoint.
@@ -207,3 +207,61 @@ Canonical interfaces and the full Orchestrator sequence are defined in Module 00
 The authoritative intent taxonomy is Module 00 §4. Tier 2 output must validate against that registry only. The Router does not own a separate taxonomy list.
 
 `FactsExtractor` uses `classification/extract_facts_v1.md` only for optional structured extraction; deterministic extraction runs first. The LLM never decides routing, planning, or business-tool execution.
+
+## 34. v4.2 Extension: Expanded Intent Taxonomy
+
+The following 15 new intents are added to `settings.router.intent_taxonomy` and validated by `Tier2Classifier`. Each must also have a corresponding Tier 1 keyword trigger in `app/router/rules.py`.
+
+### New Intents
+
+```python
+# Product Intelligence Intents
+"product_comparison"             # "compare X and Y", "difference between", "vs"
+"product_compatibility"          # "compatible with", "works with", "will X work with Y"
+"accessory_recommendation"       # "accessories for", "what do I need with", "add-ons"
+"product_finder_by_problem"      # "I have a problem with", "my network keeps dropping", "solution for"
+"product_alternative"            # "replacement for", "alternative to", "substitute for"
+"specification_explainer"        # "what does PoE mean", "explain", "what is"
+
+# Discovery / Wizard Intents
+"product_recommendation_wizard"  # "help me choose", "guide me", "recommend something for my needs"
+"use_case_recommendation"        # "for a school", "for a hospital", "data center setup", "SMB solution"
+
+# Documentation Intents
+"installation_guidance"          # "how do I install", "setup guide", "installation steps"
+"troubleshooting"                # "not working", "error", "fault", "broken" (when spec-related)
+"warranty_information"           # "warranty", "RMA", "repair", "guarantee"
+"pdf_documentation_search"       # "show me the manual", "datasheet for", "brochure", "technical document"
+
+# Transactional Intents
+"availability_inquiry"           # "in stock", "available", "when can I get", "stock check"
+"solution_builder"               # "build a solution", "full setup", "BOM", "bill of materials"
+"human_handoff"                  # "speak to a person", "talk to sales", "connect me to support"
+```
+
+### Tier 1 Additions (`app/router/rules.py`)
+
+```python
+TIER1_RULES_V42 = {
+    "product_comparison":          [r"\bcompare\b", r"\bvs\.?\b", r"\bdifference between\b", r"\bside.by.side\b"],
+    "product_compatibility":       [r"\bcompatible with\b", r"\bworks with\b", r"\bwill .+ work with\b"],
+    "accessory_recommendation":    [r"\baccessor(y|ies)\b", r"\badd.on\b", r"\bwhat .+ need with\b"],
+    "product_finder_by_problem":   [r"\bmy .+ (is|keeps|won.t)\b", r"\bproblem with\b", r"\bsolution for\b"],
+    "product_alternative":         [r"\breplacement for\b", r"\balternative to\b", r"\bsubstitute\b"],
+    "specification_explainer":     [r"\bwhat (is|does|are)\b .+(PoE|SFP|PoE\+|UPS|rack|watt)", r"\bexplain\b"],
+    "product_recommendation_wizard": [r"\bhelp me choose\b", r"\bguide me\b", r"\bwhat should I (get|buy)\b"],
+    "use_case_recommendation":     [r"\bfor (a |the )?(school|hospital|office|data.?center|cctv|enterprise|smb)\b"],
+    "installation_guidance":       [r"\bhow (do I|to) install\b", r"\bsetup (guide|steps|instructions)\b"],
+    "troubleshooting":             [r"\bnot working\b", r"\berror code\b", r"\bfault\b", r"\bbroken\b"],
+    "warranty_information":        [r"\bwarranty\b", r"\brma\b", r"\brepair\b", r"\bguarantee\b"],
+    "pdf_documentation_search":    [r"\b(manual|datasheet|brochure|installation guide)\b", r"\bshow me the doc\b"],
+    "availability_inquiry":        [r"\bin.?stock\b", r"\bavailable\b", r"\bstock check\b", r"\bwhen can I get\b"],
+    "solution_builder":            [r"\bbuild (a |the )?solution\b", r"\bbom\b", r"\bbill of materials\b", r"\bfull setup\b"],
+    "human_handoff":               [r"\bspeak to\b", r"\btalk to\b", r"\bconnect me to\b", r"\bhuman\b", r"\bagent\b"],
+}
+```
+
+### Confidence Behaviour for New Intents
+- `troubleshooting` and `technical_support` may produce overlapping Tier 1 matches. Tier 2 LLM disambiguates using conversation history. If both appear in `candidates`, `spec_question_detected=True` pushes toward `technical_support`, otherwise `troubleshooting`.
+- `product_finder_by_problem`, `product_alternative`, and `sales_inquiry` may overlap. Tier 2 always disambiguates; Tier 1 must not fire unless at least 2 distinct keyword patterns match.
+

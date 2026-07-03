@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 from dotenv import dotenv_values
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.exceptions import MissingConfigurationError
@@ -78,12 +79,71 @@ class DbSettings(RedactedModel):
 
     supabase_db_url: SecretStr
     default_tenant_id: UUID
+    supabase_db_url_async: SecretStr
+    supabase_db_url_sync: SecretStr
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_urls(cls, data: Any) -> Any:
+        """Automatically populate async and sync URL fields based on supabase_db_url."""
+        if isinstance(data, dict):
+            db_url = data.get("supabase_db_url")
+            if db_url is not None:
+                raw_url = db_url.get_secret_value() if hasattr(db_url, "get_secret_value") else str(db_url)
+                if raw_url.startswith("postgresql+asyncpg://"):
+                    async_url = raw_url
+                    sync_url = raw_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+                elif raw_url.startswith("postgresql://"):
+                    sync_url = raw_url
+                    async_url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+                else:
+                    raise ValueError("SUPABASE_DB_URL must use postgresql:// or postgresql+asyncpg:// scheme")
+                
+                data.setdefault("supabase_db_url_async", async_url)
+                data.setdefault("supabase_db_url_sync", sync_url)
+        return data
+
+    @field_validator("supabase_db_url")
+    @classmethod
+    def validate_supabase_db_url(cls, value: SecretStr) -> SecretStr:
+        """Ensure the database URL uses either postgresql:// or postgresql+asyncpg:// scheme."""
+        raw_url = value.get_secret_value()
+        if not (raw_url.startswith("postgresql://") or raw_url.startswith("postgresql+asyncpg://")):
+            raise ValueError("SUPABASE_DB_URL must use postgresql:// or postgresql+asyncpg:// scheme")
+        return value
+
+    @field_validator("supabase_db_url_async")
+    @classmethod
+    def validate_supabase_db_url_async(cls, value: SecretStr) -> SecretStr:
+        """Ensure the async database URL uses postgresql+asyncpg:// scheme."""
+        if not value.get_secret_value().startswith("postgresql+asyncpg://"):
+            raise ValueError("supabase_db_url_async must use the postgresql+asyncpg:// scheme")
+        return value
+
+    @field_validator("supabase_db_url_sync")
+    @classmethod
+    def validate_supabase_db_url_sync(cls, value: SecretStr) -> SecretStr:
+        """Ensure the sync database URL uses postgresql:// scheme."""
+        if not value.get_secret_value().startswith("postgresql://"):
+            raise ValueError("supabase_db_url_sync must use the postgresql:// scheme")
+        return value
 
 
 class RedisSettings(RedactedModel):
     """Redis configuration."""
 
     redis_url: SecretStr
+
+    @field_validator("redis_url")
+    @classmethod
+    def validate_redis_url(cls, value: SecretStr) -> SecretStr:
+        """Ensure Redis URL includes an explicit database index."""
+        parsed = urlparse(value.get_secret_value())
+        if parsed.scheme not in {"redis", "rediss"}:
+            raise ValueError("REDIS_URL must use redis:// or rediss://")
+        if not parsed.path or parsed.path == "/" or not parsed.path.lstrip("/").isdigit():
+            raise ValueError("REDIS_URL must include an explicit numeric DB index such as /0")
+        return value
 
 
 class QdrantSettings(RedactedModel):

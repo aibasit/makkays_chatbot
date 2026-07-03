@@ -102,3 +102,33 @@ def test_settings_redacts_secrets_in_repr(tmp_path: Path) -> None:
     assert "crm-secret" not in rendered
     assert "site-secret" not in rendered
 
+
+def test_db_url_validation_and_derivations() -> None:
+    """Test that DbSettings validates and generates correct async and sync URLs."""
+    from app.config import DbSettings
+    import uuid
+
+    tenant_id = uuid.uuid4()
+    db_async = DbSettings(
+        supabase_db_url="postgresql+asyncpg://user:password@host:5432/db",
+        default_tenant_id=tenant_id,
+    )
+    assert db_async.supabase_db_url.get_secret_value() == "postgresql+asyncpg://user:password@host:5432/db"
+    assert db_async.supabase_db_url_async.get_secret_value() == "postgresql+asyncpg://user:password@host:5432/db"
+    assert db_async.supabase_db_url_sync.get_secret_value() == "postgresql://user:password@host:5432/db"
+
+    db_sync = DbSettings(
+        supabase_db_url="postgresql://user:password@host:5432/db",
+        default_tenant_id=tenant_id,
+    )
+    assert db_sync.supabase_db_url.get_secret_value() == "postgresql://user:password@host:5432/db"
+    assert db_sync.supabase_db_url_async.get_secret_value() == "postgresql+asyncpg://user:password@host:5432/db"
+    assert db_sync.supabase_db_url_sync.get_secret_value() == "postgresql://user:password@host:5432/db"
+
+    with pytest.raises(ValueError):
+        DbSettings(
+            supabase_db_url="mysql://user:password@host:5432/db",
+            default_tenant_id=tenant_id,
+        )
+
+

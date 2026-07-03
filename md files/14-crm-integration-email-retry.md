@@ -337,3 +337,65 @@ APScheduler → RetryWorker.run()
 
 ## 33. Hardening Update: Scheduler and Error Contract
 Module 14 exposes `register_hooks(app, settings) -> None`, but Module 01 is the only caller and the sole owner of startup/shutdown ordering (Module 00 §12). CRM sync failure is never user-visible as a failed chat turn: the lead remains durable in Postgres and retry status is logged/metriced. User-visible behavior follows Module 00 §14.
+
+## 34. v4.2 Extension: Extended Lead Qualification & Quote PDF Email
+
+### 34.1 Extended `session_facts` Qualification Fields
+Add to the `session_facts` table (via migration applied in M14's migration sequence):
+```sql
+ALTER TABLE session_facts ADD COLUMN industry TEXT;
+ALTER TABLE session_facts ADD COLUMN project_size TEXT;   -- 'small' | 'medium' | 'large' | 'enterprise'
+ALTER TABLE session_facts ADD COLUMN location TEXT;
+ALTER TABLE session_facts ADD COLUMN timeline TEXT;        -- 'immediate' | '1-3 months' | '3-6 months' | 'planning'
+ALTER TABLE session_facts ADD COLUMN is_decision_maker BOOLEAN;
+```
+
+These fields are extracted by `FactsExtractor` (Module 06) during conversation and mapped automatically. They enrich the lead record when `create_lead` runs.
+
+### 34.2 Extended `CRMLeadCreate` Schema
+```python
+class CRMLeadCreate(BaseModel):
+    # v4.1 fields (unchanged)
+    tenant_id: UUID
+    session_id: str
+    contact_name: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    company: str | None = None
+    product_interest: str | None = None
+    # v4.2 fields (NEW)
+    industry: str | None = None
+    project_size: str | None = None
+    location: str | None = None
+    timeline: str | None = None
+    is_decision_maker: bool | None = None
+```
+
+### 34.3 Extended `LeadService.create_lead` Mapping
+`LeadService.create_lead` now reads the 5 new qualification fields from `session.facts` and maps them into the `CRMLeadCreate` object when calling the `CRMService`.
+
+### 34.4 `NotificationService.send_quote_pdf`
+Add to `NotificationService`:
+```python
+async def send_quote_pdf(
+    self,
+    to_email: str,
+    quote_result: QuoteResult,
+    pdf_bytes: bytes,
+) -> None:
+    """
+    Sends the quote PDF as an email attachment via Resend.
+    Email subject: f"Your Quote #{quote_result.quote_id[:8].upper()} from [Tenant]"
+    Attachment filename: f"quote_{quote_result.quote_id}.pdf"
+    Failures are swallowed and logged at WARNING.
+    Never raises — must not block the caller.
+    """
+```
+
+This method is called from `QuoteBuilder.build` (Module 12) via `asyncio.create_task`. Module 14 owns the Resend client; Module 12 simply calls this service method.
+
+### 34.5 Migration Order
+The new `session_facts` columns must be applied **after** the existing Module 14 CRM migration and **before** Module 20's `handoff_requests` migration:
+1. M14 v4.1 migrations (leads, retry_queue, crm_leads)
+2. M14 v4.2 migration (session_facts column additions) ← NEW
+3. M20 migration (handoff_requests)

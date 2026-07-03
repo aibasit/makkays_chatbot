@@ -182,3 +182,77 @@ Every module → `MetricsRegistry` (in-memory) → `/metrics` text output, read 
 
 ## 33. Hardening Update: Package Naming and Metrics Contract
 The canonical package name is `app.observability`, not `app.metrics`. Metrics interfaces are listed in Module 00 §5, and allowed labels/logging boundaries are in Module 00 §14. Metrics must never include high-cardinality values such as raw messages, prompt text, session IDs as labels, contact info, or full tool arguments.
+
+## 34. v4.2 Extension: New Metric Counters
+
+The following counters are added to `MetricsRegistry` in `app/observability/registry.py`:
+
+```python
+# Product Intelligence (Module 18)
+chatbot_comparison_requests_total = Counter(
+    'chatbot_comparison_requests_total', 'Number of product comparisons executed',
+    ['success']
+)
+chatbot_compatibility_checks_total = Counter(
+    'chatbot_compatibility_checks_total', 'Number of compatibility checks executed',
+    ['source', 'is_compatible']   # source: 'rule' | 'llm_inference'
+)
+chatbot_accessory_recommendations_total = Counter(
+    'chatbot_accessory_recommendations_total', 'Number of accessory recommendation tool calls',
+    ['success']
+)
+
+# Solution Builder (Module 19)
+chatbot_solution_builds_total = Counter(
+    'chatbot_solution_builds_total', 'Number of BOM solution builds completed',
+    ['trigger']   # trigger: 'wizard' | 'use_case' | 'direct'
+)
+chatbot_wizard_sessions_total = Counter(
+    'chatbot_wizard_sessions_total', 'Number of wizard sessions started',
+    ['completed']   # 'true' | 'false'
+)
+
+# Human Handoff (Module 20)
+chatbot_handoff_requests_total = Counter(
+    'chatbot_handoff_requests_total', 'Number of human handoff requests initiated',
+    ['target_team', 'status']   # target_team: 'sales' | 'technical' | 'support'
+)
+
+# Multi-language (Module 21)
+chatbot_language_detection_total = Counter(
+    'chatbot_language_detection_total', 'Number of language detections performed',
+    ['detected_language']   # 'en' | 'ur' | 'ar'
+)
+chatbot_translation_requests_total = Counter(
+    'chatbot_translation_requests_total', 'Number of response translations performed',
+    ['target_language', 'success']
+)
+
+# Availability / ERP (Module 22)
+chatbot_availability_checks_total = Counter(
+    'chatbot_availability_checks_total', 'Number of product availability checks',
+    ['source', 'in_stock']   # source: 'local_db' | 'mock' | 'erp'
+)
+
+# Quote PDF (Module 12 extension)
+chatbot_quote_pdf_generated_total = Counter(
+    'chatbot_quote_pdf_generated_total', 'Number of quote PDFs generated',
+    ['success']
+)
+```
+
+### MetricsRegistry Method Additions
+```python
+def increment_comparison_request(self, success: bool) -> None
+def increment_compatibility_check(self, source: str, is_compatible: bool | None) -> None
+def increment_accessory_recommendation(self, success: bool) -> None
+def increment_solution_build(self, trigger: str) -> None
+def increment_wizard_session(self, completed: bool) -> None
+def increment_handoff_request(self, target_team: str, status: str) -> None
+def increment_language_detection(self, detected_language: str) -> None
+def increment_translation_request(self, target_language: str, success: bool) -> None
+def increment_availability_check(self, source: str, in_stock: bool) -> None
+def increment_quote_pdf_generated(self, success: bool) -> None
+```
+
+All new counters respect the existing cardinality rule: label values must come from a fixed low-cardinality set (no session IDs, no product names, no raw text as labels).

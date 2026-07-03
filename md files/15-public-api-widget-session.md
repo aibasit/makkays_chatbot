@@ -195,3 +195,68 @@ Frontend → `POST /chat` → auth/session/rate-limit checks → `Orchestrator.o
 
 ## 33. Hardening Update: Correlation and Request Lifecycle
 Module 15 creates or accepts a `correlation_id` per HTTP request and makes it available to downstream structured logs. The canonical end-to-end request lifecycle is Module 00 §13; this module owns only authentication, session cookie, request-level rate limiting, request validation, latency measurement, and HTTP response mapping. Redis key names are authoritative in Module 00 §9.
+
+## 34. v4.2 Extension: New API Endpoints & Language Header
+
+### New Endpoints
+
+#### `GET /quotes/{quote_id}/pdf`
+Returns the generated PDF for a quote. Delegated to `QuoteRepository.get(quote_id)` → return `quotes.pdf_bytes`.
+```python
+@router.get('/quotes/{quote_id}/pdf')
+async def get_quote_pdf(quote_id: UUID, tenant_id: UUID = Depends(get_tenant_id)) -> Response:
+    """Returns Content-Type: application/pdf. 404 if quote not found or PDF not generated."""
+```
+
+#### `POST /chat/language`
+Sets the language preference for the current session (Module 21).
+```python
+@router.post('/chat/language')
+async def set_language(body: LanguageSetRequest) -> LanguageSetResponse:
+    """
+    Sets conversation_state.language_code for the session.
+    body: { session_id: str, language_code: 'en' | 'ur' | 'ar' }
+    """
+```
+
+#### `GET /products/{product_id}/availability`
+Checks product stock/availability (Module 22).
+```python
+@router.get('/products/{product_id}/availability')
+async def get_product_availability(
+    product_id: UUID,
+    service: AvailabilityService = Depends(get_availability_service),
+) -> AvailabilityResult:
+    """Requires ENABLE_AVAILABILITY_CHECK=true. Returns 503 if disabled."""
+```
+
+#### `GET /handoffs/{handoff_id}`
+Returns the status of a handoff request (Module 20).
+```python
+@router.get('/handoffs/{handoff_id}')
+async def get_handoff_status(handoff_id: UUID) -> HandoffResult:
+    """Returns current status of a handoff request by its ID."""
+```
+
+### `Accept-Language` Header Support on `POST /chat`
+```python
+@router.post('/chat')
+async def chat(
+    request: ChatRequest,
+    accept_language: str | None = Header(default=None),
+    ...
+):
+    # Parse Accept-Language header (e.g., "ur", "ar", "en-US")
+    # Map to supported LanguageCode ('en', 'ur', 'ar')
+    # Pass as initial hint to Orchestrator (stored in conversation_state.language_code)
+    # Auto-detection (Module 21) will confirm or override this on first turn
+```
+Header format accepted: `Accept-Language: ur` or `Accept-Language: ar-AE`. Only the primary language tag is used; region subtag is ignored.
+
+### Endpoint Security Policy
+| Endpoint | Auth Required | Rate Limit | Feature Flag Guard |
+|---|---|---|---|
+| `GET /quotes/{quote_id}/pdf` | Site API Key | 10/min | `ENABLE_QUOTES` |
+| `POST /chat/language` | Site API Key + Session Cookie | 20/min | `ENABLE_MULTI_LANGUAGE` |
+| `GET /products/{product_id}/availability` | Site API Key | 30/min | `ENABLE_AVAILABILITY_CHECK` |
+| `GET /handoffs/{handoff_id}` | Site API Key | 10/min | `ENABLE_HUMAN_HANDOFF` |

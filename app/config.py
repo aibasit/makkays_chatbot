@@ -290,14 +290,31 @@ class LoggingSettings(RedactedModel):
 
 
 class FeatureFlagDefaults(RedactedModel):
-    """Default feature-flag values loaded at startup."""
+    """Default feature-flag values loaded at startup (env-driven; Module 09 owns DB overrides)."""
 
+    # v4.1
     enable_rag: bool = True
     enable_quotes: bool = True
     enable_crm: bool = True
     enable_tickets: bool = True
     enable_image_upload: bool = False
     enable_llm_clarification_rewrite: bool = False
+    # v4.2 — Product Intelligence
+    enable_product_comparison: bool = True
+    enable_compatibility_check: bool = True
+    enable_accessory_recommendation: bool = True
+    enable_pdf_search: bool = True
+    # v4.2 — Solution & Wizard
+    enable_solution_builder: bool = True
+    enable_wizard: bool = True
+    enable_use_case_recommendation: bool = True
+    # v4.2 — Transactional & Ops
+    enable_human_handoff: bool = True
+    enable_availability_check: bool = False
+    enable_multi_language: bool = False
+    # v4.2 — Future Extension Stubs (always False, enforced again by FeatureFlagsService)
+    enable_voice_chat: bool = False
+    enable_image_understanding: bool = False
 
     def active_flags(self) -> list[str]:
         """Return names of enabled feature flags."""
@@ -335,6 +352,24 @@ class _FlatSettings(BaseSettings):
     enable_llm_clarification_rewrite: bool = Field(
         default=False,
         validation_alias="ENABLE_LLM_CLARIFICATION_REWRITE",
+    )
+    enable_product_comparison: bool = Field(default=True, validation_alias="ENABLE_PRODUCT_COMPARISON")
+    enable_compatibility_check: bool = Field(default=True, validation_alias="ENABLE_COMPATIBILITY_CHECK")
+    enable_accessory_recommendation: bool = Field(
+        default=True, validation_alias="ENABLE_ACCESSORY_RECOMMENDATION"
+    )
+    enable_pdf_search: bool = Field(default=True, validation_alias="ENABLE_PDF_SEARCH")
+    enable_solution_builder: bool = Field(default=True, validation_alias="ENABLE_SOLUTION_BUILDER")
+    enable_wizard: bool = Field(default=True, validation_alias="ENABLE_WIZARD")
+    enable_use_case_recommendation: bool = Field(
+        default=True, validation_alias="ENABLE_USE_CASE_RECOMMENDATION"
+    )
+    enable_human_handoff: bool = Field(default=True, validation_alias="ENABLE_HUMAN_HANDOFF")
+    enable_availability_check: bool = Field(default=False, validation_alias="ENABLE_AVAILABILITY_CHECK")
+    enable_multi_language: bool = Field(default=False, validation_alias="ENABLE_MULTI_LANGUAGE")
+    enable_voice_chat: bool = Field(default=False, validation_alias="ENABLE_VOICE_CHAT")
+    enable_image_understanding: bool = Field(
+        default=False, validation_alias="ENABLE_IMAGE_UNDERSTANDING"
     )
     ollama_timeout_seconds: float = Field(default=30.0, validation_alias="OLLAMA_TIMEOUT_SECONDS")
     llm_provider: Literal["groq", "ollama"] = Field(default="groq", validation_alias="LLM_PROVIDER")
@@ -465,6 +500,18 @@ class Settings(BaseSettings):
                 enable_tickets=flat.enable_tickets,
                 enable_image_upload=flat.enable_image_upload,
                 enable_llm_clarification_rewrite=flat.enable_llm_clarification_rewrite,
+                enable_product_comparison=flat.enable_product_comparison,
+                enable_compatibility_check=flat.enable_compatibility_check,
+                enable_accessory_recommendation=flat.enable_accessory_recommendation,
+                enable_pdf_search=flat.enable_pdf_search,
+                enable_solution_builder=flat.enable_solution_builder,
+                enable_wizard=flat.enable_wizard,
+                enable_use_case_recommendation=flat.enable_use_case_recommendation,
+                enable_human_handoff=flat.enable_human_handoff,
+                enable_availability_check=flat.enable_availability_check,
+                enable_multi_language=flat.enable_multi_language,
+                enable_voice_chat=flat.enable_voice_chat,
+                enable_image_understanding=flat.enable_image_understanding,
             ),
         )
 

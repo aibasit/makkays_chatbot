@@ -6,10 +6,10 @@ import uuid
 
 import pytest
 
+from app.flags.schemas import FeatureFlags
 from app.planner.exceptions import UnknownIntentError
 from app.planner.planner import TaskPlanner
 from app.session.schemas import ConversationStateSchema, FactsSchema
-from app.shared.feature_flags import FeatureFlags
 from app.shared.intent_context import IntentResult
 
 

@@ -27,9 +27,9 @@ inside an earlier module.
 | 05 | LLM Engine (`app/llm/`) — dual-provider, see below | ✅ Done |
 | 06 | Router & Hybrid Intent Classification (`app/router/`) | ✅ Core done — see caveat below |
 | 07 | Task Planner (`app/planner/`) | ✅ Done |
-| 08 | Prompt Manager | ⬅️ **Next / not started** |
-| 09 | Feature Flags | Not started |
-| 10 | Security Policy Registry & Tool Executor | Not started |
+| 08 | Prompt Manager (`app/prompts/`, `prompt_library/`) | ✅ Done |
+| 09 | Feature Flags (`app/flags/`) | ✅ Done |
+| 10 | Security Policy Registry & Tool Executor | ⬅️ **Next / not started** |
 | 11 | RAG Engine (BGE-M3, Qdrant) | Not started |
 | 12 | Quote Builder & PDF Export | Not started |
 | 13 | Clarification Template Library | Not started |
@@ -43,27 +43,50 @@ inside an earlier module.
 | 21 | Multi-language (EN/UR/AR) | Not started |
 | 22 | Availability & ERP Bridge | Not started |
 
-Alembic migrations so far: `0001_session_state`, `0002_conversation_turns`.
+Alembic migrations so far: `0001_session_state`, `0002_conversation_turns`, `0003_feature_flags`.
 
-**Start here next session:** implement Module 08 (Prompt Manager) per
-[md files/08-prompt-manager.md](md%20files/08-prompt-manager.md) — it's the next
-unblocked module and the first of the five `Orchestrator.on_turn` needs (see caveat below).
+**Start here next session:** implement Module 10 (Security Policy Registry & Tool
+Executor) per [md files/10-security-policy-tool-executor.md](md%20files/10-security-policy-tool-executor.md)
+— it's the next unblocked module and the third of the five `Orchestrator.on_turn` needs
+(see caveat below).
 
-### Module 06/07 detail and the Orchestrator caveat
+### Module 06/07/08/09 detail and the Orchestrator caveat
 
 `app/router/` (Tier1RuleEngine, Tier2Classifier, FactsExtractor, `Router.classify`) and
 `app/planner/` (`TaskPlanner.build_plan`) are fully implemented and tested — both are
 self-contained given only M03/M04/M05 (already built). `Router`/`FactsExtractor` depend
-on a `PromptProvider` protocol (`app/shared/intent_context.py`) instead of importing
-Module 08's `PromptManager` directly, so no rewrite is needed once M08 exists.
+on a narrow `PromptProvider` protocol (`app/shared/intent_context.py`, `.get` only)
+rather than importing Module 08's `PromptManager` directly.
+
+Module 08 (`app/prompts/`) is now implemented: `PromptManager.get(category, name,
+version)` / `get_latest(category, name)`, filesystem-backed with a process-lifetime
+cache, singleton at `app.prompts.manager.prompt_manager` (constructed from
+`settings.prompts.library_path`, path resolved to absolute at construction time —
+don't change that back to a bare relative `Path`, it broke two existing tests that
+`monkeypatch.chdir` before booting the app). `app/prompts/manager.PromptProvider` is
+the richer protocol (`get` + `get_latest`) real future callers should type-hint
+against; Router's own narrower one-method protocol is intentionally kept separate
+(interface segregation) and is structurally satisfied by the same `PromptManager`.
+`prompt_library/` has real content for all nine prompts Module 08's startup self-check
+requires; `app.main`'s lifespan now runs that self-check and **hard-fails startup** if
+any referenced prompt is missing — this is intentional (packaging bug, not a transient
+outage, unlike the LLM health check which only warns).
+
+Module 09 (`app/flags/`) is now implemented: `FeatureFlagsService.resolve(tenant_id) ->
+FeatureFlags` merges `Settings.flags` env defaults with optional per-tenant overrides in
+the `feature_flags` table (migration `0003_feature_flags`), TTL-cached 60s per tenant via
+`cachetools.TTLCache` (added as a new dependency). `FeatureFlags` now lives at
+`app.flags.schemas.FeatureFlags` with all 18 v4.1+v4.2 flags — this **replaced** the
+`app/shared/feature_flags.py` seed from the M07 session (deleted; Planner's
+`build_plan` signature was unaffected). `enable_voice_chat`/`enable_image_understanding`
+are always forced `False` regardless of any override, per spec.
 
 `Orchestrator.on_turn` (`app/orchestrator/orchestrator.py`) is a **documented
 placeholder that raises `NotImplementedError`** — its real spec (readme.md §12/13)
-calls directly into `FeatureFlagsService` (M09), `ToolExecutor` (M10),
-`ClarificationFlow` (M13), and `MetricsRegistry` (M16), none of which exist yet. Wire it
-up once those land, in build order. Two other seed files exist purely so Planner could
-be built now: `app/shared/feature_flags.py` (`FeatureFlags` shape — M09 owns real
-resolution/persistence) and `app/quotes/schemas.py` (`quote_slots_complete` predicate —
+calls directly into `FeatureFlagsService` (M09, now available), `ToolExecutor` (M10),
+`ClarificationFlow` (M13), and `MetricsRegistry` (M16). Wire it up once the remaining
+three land, in build order. One more seed file still exists purely so Planner could be
+built ahead of its owner: `app/quotes/schemas.py` (`quote_slots_complete` predicate —
 M12 owns the full Quote Builder and may refine this definition).
 
 ## LLM provider (Module 05 detail)

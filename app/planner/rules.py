@@ -6,9 +6,9 @@ fallback step so a plan is never left without a user-facing response.
 
 from __future__ import annotations
 
+from app.flags.schemas import FeatureFlags
 from app.quotes.schemas import quote_slots_complete
 from app.session.schemas import ConversationStateSchema, FactsSchema
-from app.shared.feature_flags import FeatureFlags
 from app.shared.intent_context import IntentResult
 
 

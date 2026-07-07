@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from app.flags.schemas import FeatureFlags
 from app.logging_config import get_logger
 from app.planner.exceptions import UnknownIntentError
 from app.planner.rules import RULE_REGISTRY
 from app.planner.schemas import Plan
 from app.session.schemas import ConversationStateSchema, FactsSchema
-from app.shared.feature_flags import FeatureFlags
 from app.shared.intent_context import IntentResult
 
 logger = get_logger(__name__)

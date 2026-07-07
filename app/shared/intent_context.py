@@ -26,12 +26,13 @@ class ClassifyIntentArguments(BaseModel):
 
 
 class PromptProvider(Protocol):
-    """Structural protocol satisfied by Module 08's PromptManager.
+    """Narrow structural protocol for the one method Router/FactsExtractor need.
 
-    Declared here (rather than importing Module 08 directly) so Router and
-    Planner consumers can be built and tested before the Prompt Manager exists;
-    the real `PromptManager.get` will satisfy this protocol without any change
-    to callers.
+    Module 08's `app.prompts.manager.PromptManager` (and its own, richer
+    `PromptProvider` protocol requiring `get` and `get_latest`) satisfies this
+    automatically — it's a structural subtype. Kept separate here rather than
+    importing Module 08's protocol so Router's test doubles only need to
+    implement `get`, not the `get_latest` method Router never calls.
     """
 
     def get(self, category: str, name: str, version: str) -> str:

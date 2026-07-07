@@ -94,6 +94,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         register_lifecycle_hooks(app, settings)
         app.state.settings = settings
 
+        # Prompt self-check: a missing/renamed prompt file is a packaging bug, so
+        # this deliberately raises and aborts startup rather than degrading.
+        from app.prompts.manager import register_hooks as register_prompt_hooks
+
+        register_prompt_hooks(app, settings)
+        logger.info("Prompt library self-check passed; all referenced prompts exist on disk.")
+
         # Verify the active LLM provider's availability and model existence on startup
         try:
             from app.llm.health import verify_llm_status

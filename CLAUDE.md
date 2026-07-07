@@ -19,15 +19,15 @@ Modules are built strictly in dependency order. Do not jump ahead or build M06+ 
 inside an earlier module.
 
 | # | Module | Status |
-|---|---|---|
+| - | - | - |
 | 01 | Foundation & Configuration (`app/config.py`, `app/main.py`, `app/dependencies.py`, `app/exceptions.py`, `app/logging_config.py`) | ✅ Done |
 | 02 | Database & Cache Layer (`app/db/`, `app/cache/`) | ✅ Done |
 | 03 | Session & State Management — Facts vs Conversation State (`app/session/`) | ✅ Done |
 | 04 | Conversation Turns & Structured Logging (`app/turns/`) | ✅ Done |
 | 05 | LLM Engine (`app/llm/`) — dual-provider, see below | ✅ Done |
-| 06 | Router & Hybrid Intent Classification (`app/router/`) | ⬅️ **Next / not started** |
-| 07 | Task Planner | Not started |
-| 08 | Prompt Manager | Not started |
+| 06 | Router & Hybrid Intent Classification (`app/router/`) | ✅ Core done — see caveat below |
+| 07 | Task Planner (`app/planner/`) | ✅ Done |
+| 08 | Prompt Manager | ⬅️ **Next / not started** |
 | 09 | Feature Flags | Not started |
 | 10 | Security Policy Registry & Tool Executor | Not started |
 | 11 | RAG Engine (BGE-M3, Qdrant) | Not started |
@@ -45,10 +45,26 @@ inside an earlier module.
 
 Alembic migrations so far: `0001_session_state`, `0002_conversation_turns`.
 
-**Start here next session:** implement Module 06 per
-[md files/06-router-intent-classification.md](md%20files/06-router-intent-classification.md),
-using the `FactsExtractor`, `Router`, and `Orchestrator` interfaces pinned in
-readme.md §5 and the facts-extraction contract in readme.md §6.
+**Start here next session:** implement Module 08 (Prompt Manager) per
+[md files/08-prompt-manager.md](md%20files/08-prompt-manager.md) — it's the next
+unblocked module and the first of the five `Orchestrator.on_turn` needs (see caveat below).
+
+### Module 06/07 detail and the Orchestrator caveat
+
+`app/router/` (Tier1RuleEngine, Tier2Classifier, FactsExtractor, `Router.classify`) and
+`app/planner/` (`TaskPlanner.build_plan`) are fully implemented and tested — both are
+self-contained given only M03/M04/M05 (already built). `Router`/`FactsExtractor` depend
+on a `PromptProvider` protocol (`app/shared/intent_context.py`) instead of importing
+Module 08's `PromptManager` directly, so no rewrite is needed once M08 exists.
+
+`Orchestrator.on_turn` (`app/orchestrator/orchestrator.py`) is a **documented
+placeholder that raises `NotImplementedError`** — its real spec (readme.md §12/13)
+calls directly into `FeatureFlagsService` (M09), `ToolExecutor` (M10),
+`ClarificationFlow` (M13), and `MetricsRegistry` (M16), none of which exist yet. Wire it
+up once those land, in build order. Two other seed files exist purely so Planner could
+be built now: `app/shared/feature_flags.py` (`FeatureFlags` shape — M09 owns real
+resolution/persistence) and `app/quotes/schemas.py` (`quote_slots_complete` predicate —
+M12 owns the full Quote Builder and may refine this definition).
 
 ## LLM provider (Module 05 detail)
 
@@ -91,9 +107,14 @@ Switching to Ollama: `docker compose --profile ollama up -d ollama` then
 
 **Run tests inside Docker, not the host Python** — the host interpreter doesn't have
 project deps installed:
+
 ```bash
 docker compose run --rm --no-deps backend python -m pytest -q
 ```
+
+Source is baked into the image at build time (no volume mount), so **rebuild before
+testing** whenever app code changes: `docker compose build backend` first, then run
+the command above (or `docker compose up -d backend` to also refresh the live container).
 
 ## Conventions (binding across all modules — from readme.md §3)
 
@@ -119,4 +140,4 @@ docker compose run --rm --no-deps backend python -m pytest -q
 ## User preferences
 
 - Prefers being told exactly what to do next in sequence, not a menu of options.
-- GitHub repo: https://github.com/aibasit/makkays_chatbot
+- GitHub repo: <https://github.com/aibasit/makkays_chatbot>

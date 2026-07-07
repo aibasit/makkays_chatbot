@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -24,6 +24,7 @@ REQUIRED_ENV_VARS: tuple[str, ...] = (
     "REDIS_URL",
     "OLLAMA_HOST",
     "OLLAMA_MODEL",
+    "GROQ_API_KEY",
     "EMBEDDING_MODEL",
     "RESEND_API_KEY",
     "RESEND_FROM_EMAIL",
@@ -167,6 +168,16 @@ class OllamaSettings(RedactedModel):
     default_temperature: float = 0.0
 
 
+class GroqSettings(RedactedModel):
+    """Groq Cloud LLM configuration."""
+
+    api_key: SecretStr
+    model: str = "llama-3.3-70b-versatile"
+    base_url: str = "https://api.groq.com/openai/v1"
+    timeout_seconds: float = 30.0
+    default_temperature: float = 0.0
+
+
 class EmbeddingSettings(RedactedModel):
     """Embedding model configuration."""
 
@@ -297,6 +308,13 @@ class _FlatSettings(BaseSettings):
         validation_alias="ENABLE_LLM_CLARIFICATION_REWRITE",
     )
     ollama_timeout_seconds: float = Field(default=30.0, validation_alias="OLLAMA_TIMEOUT_SECONDS")
+    llm_provider: Literal["groq", "ollama"] = Field(default="groq", validation_alias="LLM_PROVIDER")
+    groq_api_key: SecretStr = Field(validation_alias="GROQ_API_KEY")
+    groq_model: str = Field(default="llama-3.3-70b-versatile", validation_alias="GROQ_MODEL")
+    groq_base_url: str = Field(
+        default="https://api.groq.com/openai/v1", validation_alias="GROQ_BASE_URL"
+    )
+    groq_timeout_seconds: float = Field(default=30.0, validation_alias="GROQ_TIMEOUT_SECONDS")
     classification_confidence_threshold: float = Field(
         default=0.70,
         validation_alias="CLASSIFICATION_CONFIDENCE_THRESHOLD",
@@ -338,7 +356,9 @@ class Settings(BaseSettings):
     db: DbSettings
     redis: RedisSettings
     qdrant: QdrantSettings
+    llm_provider: Literal["groq", "ollama"]
     ollama: OllamaSettings
+    groq: GroqSettings
     embedding: EmbeddingSettings
     resend: ResendSettings
     crm: CrmSettings
@@ -367,11 +387,18 @@ class Settings(BaseSettings):
             ),
             redis=RedisSettings(redis_url=flat.redis_url),
             qdrant=QdrantSettings(url=flat.qdrant_url, api_key=flat.qdrant_api_key),
+            llm_provider=flat.llm_provider,
             ollama=OllamaSettings(
                 host=flat.ollama_host,
                 model=flat.ollama_model,
                 timeout_seconds=flat.ollama_timeout_seconds,
                 default_temperature=flat.ollama_default_temperature,
+            ),
+            groq=GroqSettings(
+                api_key=flat.groq_api_key,
+                model=flat.groq_model,
+                base_url=flat.groq_base_url,
+                timeout_seconds=flat.groq_timeout_seconds,
             ),
             embedding=EmbeddingSettings(model_name=flat.embedding_model),
             resend=ResendSettings(api_key=flat.resend_api_key, from_email=flat.resend_from_email),

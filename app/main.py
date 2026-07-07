@@ -94,33 +94,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         register_lifecycle_hooks(app, settings)
         app.state.settings = settings
 
-        # Verify Ollama availability and model existence on startup
+        # Verify the active LLM provider's availability and model existence on startup
         try:
-            from app.llm.health import verify_ollama_status
+            from app.llm.health import verify_llm_status
 
-            available, model_exists = await verify_ollama_status(settings)
+            provider, available, model_exists = await verify_llm_status(settings)
+            endpoint = settings.groq.base_url if provider == "groq" else settings.ollama.host
+            model = settings.groq.model if provider == "groq" else settings.ollama.model
             if not available:
                 logger.warning(
-                    "Ollama service is unreachable at %s. Backend remains operational but LLM calls will fail.",
-                    settings.ollama.host,
+                    "%s LLM provider is unreachable at %s. Backend remains operational but LLM calls will fail.",
+                    provider,
+                    endpoint,
                 )
             elif not model_exists:
                 logger.warning(
-                    "WARNING: Configured Ollama model '%s' is missing on the Ollama server at %s. "
-                    "Please pull the model manually by running:\n"
-                    "docker exec -it ollama ollama pull %s",
-                    settings.ollama.model,
-                    settings.ollama.host,
-                    settings.ollama.model,
+                    "WARNING: Configured %s model '%s' is not available at %s.",
+                    provider,
+                    model,
+                    endpoint,
                 )
             else:
                 logger.info(
-                    "Ollama service is available and model '%s' is ready.",
-                    settings.ollama.model,
+                    "%s LLM provider is available and model '%s' is ready.",
+                    provider,
+                    model,
                 )
         except Exception as exc:
             logger.warning(
-                "Unexpected error during Ollama startup verification: %s. Continuing startup...",
+                "Unexpected error during LLM startup verification: %s. Continuing startup...",
                 exc,
             )
 
@@ -142,9 +144,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.error("Failed to close Redis client during shutdown: %s", exc)
 
         try:
-            from app.llm.client import close_shared_http_client
+            from app.llm.client import close_shared_http_client as close_ollama_http_client
+            from app.llm.groq_client import close_shared_http_client as close_groq_http_client
 
-            await close_shared_http_client()
+            await close_ollama_http_client()
+            await close_groq_http_client()
         except Exception as exc:
             logger.error("Failed to close LLM HTTP client during shutdown: %s", exc)
 
@@ -228,10 +232,12 @@ def register_lifecycle_hooks(app: FastAPI, settings: Settings) -> None:
 
     from app.cache.redis_client import register_hooks as register_redis_hooks
     from app.db.engine import register_hooks as register_db_hooks
-    from app.llm.client import register_hooks as register_llm_hooks
+    from app.llm.client import register_hooks as register_ollama_hooks
+    from app.llm.groq_client import register_hooks as register_groq_hooks
 
     register_db_hooks(app, settings)
     register_redis_hooks(app, settings)
-    register_llm_hooks(app, settings)
+    register_ollama_hooks(app, settings)
+    register_groq_hooks(app, settings)
     app.state.lifecycle_hooks_registered = True
     app.state.lifecycle_settings = settings

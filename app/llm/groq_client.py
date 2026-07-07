@@ -1,8 +1,7 @@
-"""Async Ollama client for chat, tool calling, and structured outputs."""
+"""Async Groq Cloud client for chat, tool calling, and structured outputs."""
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
@@ -23,11 +22,11 @@ from app.logging_config import get_logger
 logger = get_logger(__name__)
 
 _shared_http_client: httpx.AsyncClient | None = None
-_shared_timeout_seconds: int | None = None
+_shared_client_key: tuple[str, float] | None = None
 
 
-class OllamaClient:
-    """Thin async wrapper over Ollama's `/api/chat` endpoint."""
+class GroqClient:
+    """Thin async wrapper over Groq Cloud's OpenAI-compatible `/chat/completions` endpoint."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -39,48 +38,45 @@ class OllamaClient:
         response_format: dict[str, Any] | None = None,
         temperature: float = 0.0,
     ) -> LLMResponse:
-        """Send a chat request to Ollama and parse the typed response."""
+        """Send a chat request to Groq and parse the typed response."""
         validate_messages(messages)
         payload = self._build_payload(messages, tools, response_format, temperature)
         started_at = time.perf_counter()
         try:
-            raw = await asyncio.wait_for(
-                self._post(payload),
-                timeout=self.settings.ollama.timeout_seconds,
-            )
-        except TimeoutError as exc:
-            logger.warning(
-                "ollama_chat_timeout",
-                extra={
-                    "endpoint": self.settings.ollama.host,
-                    "model": self.settings.ollama.model,
-                    "timeout_seconds": self.settings.ollama.timeout_seconds,
-                    "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
-                },
-            )
-            raise LLMTimeoutError("Ollama chat request timed out") from exc
+            raw = await self._post(payload)
         except httpx.TimeoutException as exc:
             logger.warning(
-                "ollama_http_timeout",
+                "groq_http_timeout",
                 extra={
-                    "endpoint": self.settings.ollama.host,
-                    "model": self.settings.ollama.model,
-                    "timeout_seconds": self.settings.ollama.timeout_seconds,
+                    "endpoint": self.settings.groq.base_url,
+                    "model": self.settings.groq.model,
+                    "timeout_seconds": self.settings.groq.timeout_seconds,
                     "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
                 },
             )
-            raise LLMTimeoutError("Ollama chat request timed out") from exc
+            raise LLMTimeoutError("Groq chat request timed out") from exc
         except httpx.RequestError as exc:
             logger.warning(
-                "ollama_unavailable",
+                "groq_unavailable",
                 extra={
-                    "endpoint": self.settings.ollama.host,
-                    "model": self.settings.ollama.model,
-                    "timeout_seconds": self.settings.ollama.timeout_seconds,
+                    "endpoint": self.settings.groq.base_url,
+                    "model": self.settings.groq.model,
+                    "timeout_seconds": self.settings.groq.timeout_seconds,
                     "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
                 },
             )
-            raise LLMUnavailableError("Ollama is unavailable") from exc
+            raise LLMUnavailableError("Groq is unavailable") from exc
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "groq_http_error",
+                extra={
+                    "endpoint": self.settings.groq.base_url,
+                    "model": self.settings.groq.model,
+                    "status_code": exc.response.status_code,
+                    "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                },
+            )
+            raise LLMUnavailableError("Groq returned an error response") from exc
 
         response = _parse_response(raw)
         if tools:
@@ -89,12 +85,12 @@ class OllamaClient:
             validate_structured_content(response.content, response_format)
 
         logger.info(
-            "ollama_chat_success",
+            "groq_chat_success",
             extra={
-                "endpoint": self.settings.ollama.host,
-                "model": self.settings.ollama.model,
+                "endpoint": self.settings.groq.base_url,
+                "model": self.settings.groq.model,
                 "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
-                "timeout_seconds": self.settings.ollama.timeout_seconds,
+                "timeout_seconds": self.settings.groq.timeout_seconds,
             },
         )
         return response
@@ -107,64 +103,72 @@ class OllamaClient:
         temperature: float,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "model": self.settings.ollama.model,
+            "model": self.settings.groq.model,
             "messages": [_message_payload(message) for message in messages],
             "stream": False,
-            "options": {"temperature": temperature},
+            "temperature": temperature,
         }
         if tools:
             payload["tools"] = tools
         if response_format is not None:
-            payload["format"] = response_format
+            payload["response_format"] = {"type": "json_object"}
         return payload
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         client = get_shared_http_client(self.settings)
-        response = await client.post("/api/chat", json=payload)
+        response = await client.post(
+            "/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {self.settings.groq.api_key.get_secret_value()}"},
+        )
         response.raise_for_status()
         return response.json()
 
 
 def get_shared_http_client(settings: Settings) -> httpx.AsyncClient:
-    """Return the process-wide Ollama HTTP client."""
-    global _shared_http_client, _shared_timeout_seconds
-    timeout_seconds = settings.ollama.timeout_seconds
-    if _shared_http_client is None or _shared_timeout_seconds != timeout_seconds:
+    """Return the process-wide Groq HTTP client."""
+    global _shared_http_client, _shared_client_key
+    key = (settings.groq.base_url, settings.groq.timeout_seconds)
+    if _shared_http_client is None or _shared_client_key != key:
         if _shared_http_client is not None and not _shared_http_client.is_closed:
-            logger.warning("ollama_http_client_recreated")
+            logger.warning("groq_http_client_recreated")
         _shared_http_client = httpx.AsyncClient(
-            base_url=settings.ollama.host.rstrip("/"),
-            timeout=httpx.Timeout(connect=5.0, read=timeout_seconds, write=5.0, pool=2.0),
+            base_url=settings.groq.base_url.rstrip("/"),
+            timeout=httpx.Timeout(
+                connect=5.0, read=settings.groq.timeout_seconds, write=5.0, pool=2.0
+            ),
         )
-        _shared_timeout_seconds = timeout_seconds
+        _shared_client_key = key
     return _shared_http_client
 
 
 async def close_shared_http_client() -> None:
-    """Close the process-wide Ollama HTTP client."""
-    global _shared_http_client, _shared_timeout_seconds
+    """Close the process-wide Groq HTTP client."""
+    global _shared_http_client, _shared_client_key
     if _shared_http_client is not None:
         await _shared_http_client.aclose()
     _shared_http_client = None
-    _shared_timeout_seconds = None
+    _shared_client_key = None
 
 
 def register_hooks(app: Any, settings: Settings) -> None:
-    """Register LLM shutdown hook with the app lifecycle."""
+    """Register Groq shutdown hook with the app lifecycle."""
     shutdown_hooks = getattr(app.state, "shutdown_hooks", [])
     shutdown_hooks.append(close_shared_http_client)
     app.state.shutdown_hooks = shutdown_hooks
 
 
 def _message_payload(message: ChatMessage) -> dict[str, Any]:
-    payload = message.model_dump(exclude_none=True)
-    return payload
+    return message.model_dump(exclude_none=True)
 
 
 def _parse_response(raw: dict[str, Any]) -> LLMResponse:
-    message = raw.get("message")
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise LLMMalformedOutputError("Groq response missing choices")
+    message = choices[0].get("message")
     if not isinstance(message, dict):
-        raise LLMMalformedOutputError("Ollama response missing message object")
+        raise LLMMalformedOutputError("Groq response missing message object")
     content = message.get("content")
     tool_calls = [parse_tool_call(item) for item in message.get("tool_calls") or []]
     return LLMResponse(content=content if content != "" else None, tool_calls=tool_calls, raw=raw)

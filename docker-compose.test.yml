@@ -25,9 +25,12 @@ services:
       timeout: 5s
       retries: 5
 
+  # Not started by default (LLM_PROVIDER=grok for the MVP). Start with
+  # `docker compose -f docker-compose.test.yml --profile ollama up -d` for local-Ollama test runs.
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
+    profiles: ["ollama"]
     expose:
       - "11434"
     volumes:
@@ -51,6 +54,8 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:3b
       - OLLAMA_TIMEOUT_SECONDS=30
+      - LLM_PROVIDER=groq
+      - GROQ_API_KEY=mock-key
       - EMBEDDING_MODEL=BAAI/bge-m3
       - RESEND_API_KEY=mock-key
       - RESEND_FROM_EMAIL=mock@example.com
@@ -61,8 +66,6 @@ services:
       test-postgres:
         condition: service_healthy
       test-redis:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
 
 volumes:

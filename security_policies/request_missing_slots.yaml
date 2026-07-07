@@ -1,0 +1,8 @@
+tool_name: request_missing_slots
+allowed_intents:
+  - sales_inquiry
+  - quote_request
+required_state: []
+required_slots: []
+rate_limit: null
+audit_log: false

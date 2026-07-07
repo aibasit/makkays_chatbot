@@ -1,0 +1,8 @@
+tool_name: retrieve_products
+allowed_intents:
+  - sales_inquiry
+  - quote_request
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

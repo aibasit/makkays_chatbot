@@ -1,0 +1,26 @@
+tool_name: respond
+allowed_intents:
+  - sales_inquiry
+  - quote_request
+  - technical_support
+  - escalation_request
+  - out_of_scope
+  - product_comparison
+  - product_compatibility
+  - accessory_recommendation
+  - product_finder_by_problem
+  - product_alternative
+  - specification_explainer
+  - product_recommendation_wizard
+  - use_case_recommendation
+  - installation_guidance
+  - troubleshooting
+  - warranty_information
+  - pdf_documentation_search
+  - availability_inquiry
+  - solution_builder
+  - human_handoff
+required_state: []
+required_slots: []
+rate_limit: null
+audit_log: false

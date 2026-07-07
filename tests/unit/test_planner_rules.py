@@ -54,7 +54,7 @@ def test_plan_sales_inquiry_multiple_candidates_includes_compare() -> None:
 
 def test_plan_sales_inquiry_quote_slots_complete_includes_generate_quote() -> None:
     planner = TaskPlanner()
-    facts = _facts(product_interest="switch", quantity=5, contact_email="a@example.com")
+    facts = _facts(company="Acme", product_interest="switch", quantity=5, budget=1000)
 
     plan = planner.build_plan(_intent("sales_inquiry"), facts, _state(), FeatureFlags())
 
@@ -71,7 +71,7 @@ def test_plan_quote_request_quote_slots_incomplete_includes_request_missing_slot
 
 def test_plan_quote_request_quote_slots_complete_includes_generate_quote() -> None:
     planner = TaskPlanner()
-    facts = _facts(product_interest="switch", quantity=5, contact_phone="+1234567890")
+    facts = _facts(company="Acme", product_interest="switch", quantity=5, budget=1000)
 
     plan = planner.build_plan(_intent("quote_request"), facts, _state(), FeatureFlags())
 

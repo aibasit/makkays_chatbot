@@ -101,6 +101,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         register_prompt_hooks(app, settings)
         logger.info("Prompt library self-check passed; all referenced prompts exist on disk.")
 
+        # Import tool-owning modules so tools self-register, then load Security
+        # Policies and fail fast if any registered tool has no policy file.
+        from app.tools import register_hooks as register_tool_hooks
+
+        register_tool_hooks(app, settings)
+        logger.info("Security policy self-check passed; all registered tools have a policy.")
+
         # Verify the active LLM provider's availability and model existence on startup
         try:
             from app.llm.health import verify_llm_status

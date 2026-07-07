@@ -1,0 +1,9 @@
+tool_name: create_lead
+allowed_intents:
+  - sales_inquiry
+  - quote_request
+required_state:
+  - contact_info_complete
+required_slots: []
+rate_limit: "5/min"
+audit_log: true

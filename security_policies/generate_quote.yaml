@@ -1,0 +1,13 @@
+tool_name: generate_quote
+allowed_intents:
+  - sales_inquiry
+  - quote_request
+required_state:
+  - quote_slots_complete
+required_slots:
+  - company
+  - product_interest
+  - quantity
+  - budget
+rate_limit: "5/min"
+audit_log: true

@@ -29,11 +29,11 @@ def plan_sales_inquiry(
         steps.append("retrieve_docs")
     if len(intent_result.candidates) > 1:
         steps.append("compare")
-    if flags.enable_quotes and quote_slots_complete(facts):
+    if flags.enable_quotes and quote_slots_complete(facts, state):
         steps.append("generate_quote")
     elif (
         flags.enable_quotes
-        and not quote_slots_complete(facts)
+        and not quote_slots_complete(facts, state)
         and intent_result.intent == "quote_request"
     ):
         steps.append("request_missing_slots")
@@ -51,7 +51,7 @@ def plan_quote_request(
     intent_result: IntentResult,
 ) -> list[str]:
     """Explicit pricing/quotation intent."""
-    if flags.enable_quotes and quote_slots_complete(facts):
+    if flags.enable_quotes and quote_slots_complete(facts, state):
         steps = ["retrieve_products", "generate_quote", "respond"]
     else:
         steps = ["retrieve_products", "request_missing_slots", "respond"]

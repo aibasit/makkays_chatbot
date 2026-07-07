@@ -16,6 +16,34 @@ from app.exceptions import MissingConfigurationError
 
 SENSITIVE_KEY_PARTS = ("PASSWORD", "SECRET", "TOKEN", "API_KEY", "KEY")
 
+BASE_INTENT_TAXONOMY: tuple[str, ...] = (
+    "sales_inquiry",
+    "quote_request",
+    "technical_support",
+    "escalation_request",
+    "out_of_scope",
+)
+
+V42_INTENT_TAXONOMY: tuple[str, ...] = (
+    "product_comparison",
+    "product_compatibility",
+    "accessory_recommendation",
+    "product_finder_by_problem",
+    "product_alternative",
+    "specification_explainer",
+    "product_recommendation_wizard",
+    "use_case_recommendation",
+    "installation_guidance",
+    "troubleshooting",
+    "warranty_information",
+    "pdf_documentation_search",
+    "availability_inquiry",
+    "solution_builder",
+    "human_handoff",
+)
+
+INTENT_TAXONOMY: tuple[str, ...] = BASE_INTENT_TAXONOMY + V42_INTENT_TAXONOMY
+
 REQUIRED_ENV_VARS: tuple[str, ...] = (
     "SUPABASE_DB_URL",
     "DEFAULT_TENANT_ID",
@@ -221,6 +249,7 @@ class RouterSettings(RedactedModel):
     """Intent router configuration."""
 
     classification_confidence_threshold: float = 0.70
+    intent_taxonomy: tuple[str, ...] = INTENT_TAXONOMY
 
 
 class SessionSettings(RedactedModel):

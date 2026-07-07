@@ -29,8 +29,8 @@ inside an earlier module.
 | 07 | Task Planner (`app/planner/`) | ✅ Done |
 | 08 | Prompt Manager (`app/prompts/`, `prompt_library/`) | ✅ Done |
 | 09 | Feature Flags (`app/flags/`) | ✅ Done |
-| 10 | Security Policy Registry & Tool Executor | ⬅️ **Next / not started** |
-| 11 | RAG Engine (BGE-M3, Qdrant) | Not started |
+| 10 | Security Policy Registry & Tool Executor (`app/tools/`, `security_policies/`) | ✅ Done |
+| 11 | RAG Engine (BGE-M3, Qdrant) | ⬅️ **Next / not started** |
 | 12 | Quote Builder & PDF Export | Not started |
 | 13 | Clarification Template Library | Not started |
 | 14 | CRM Integration, Retry Queue & Email (Resend) | Not started |
@@ -43,14 +43,17 @@ inside an earlier module.
 | 21 | Multi-language (EN/UR/AR) | Not started |
 | 22 | Availability & ERP Bridge | Not started |
 
-Alembic migrations so far: `0001_session_state`, `0002_conversation_turns`, `0003_feature_flags`.
+Alembic migrations so far: `0001_session_state`, `0002_conversation_turns`,
+`0003_feature_flags`, `0004_tool_audit_log`.
 
-**Start here next session:** implement Module 10 (Security Policy Registry & Tool
-Executor) per [md files/10-security-policy-tool-executor.md](md%20files/10-security-policy-tool-executor.md)
-— it's the next unblocked module and the third of the five `Orchestrator.on_turn` needs
-(see caveat below).
+**Start here next session:** implement Module 11 (RAG Engine) per
+[md files/11-rag-engine.md](md%20files/11-rag-engine.md) — it's the next unblocked
+module. It's not one of the five things `Orchestrator.on_turn` is still waiting on
+(only M13 Clarification and M16 Metrics remain for that), but it's next in build order
+and it's what will let `retrieve_products`/`retrieve_docs` become real registered tools
+instead of absent from `ToolRegistry`.
 
-### Module 06/07/08/09 detail and the Orchestrator caveat
+### Module 06/07/08/09/10 detail and the Orchestrator caveat
 
 `app/router/` (Tier1RuleEngine, Tier2Classifier, FactsExtractor, `Router.classify`) and
 `app/planner/` (`TaskPlanner.build_plan`) are fully implemented and tested — both are
@@ -81,13 +84,32 @@ the `feature_flags` table (migration `0003_feature_flags`), TTL-cached 60s per t
 `build_plan` signature was unaffected). `enable_voice_chat`/`enable_image_understanding`
 are always forced `False` regardless of any override, per spec.
 
+Module 10 (`app/tools/`) is now implemented: `ToolExecutor.execute_plan`/`execute_step`
+enforce plan-conformance (`PlanViolationError` if a step isn't in the current plan) then
+the step's Security Policy (intent → `required_state` predicates → `required_slots` →
+Redis fixed-window rate limit, in that order) before ever calling the tool. Critical
+steps (`generate_quote`, `create_lead`) abort the rest of the plan on denial/exception;
+others degrade gracefully. `security_policies/*.yaml` has one file per tool, loaded by
+`PolicyRegistry` and self-checked at boot (`app.main` hard-fails if any *registered*
+tool lacks a policy — note this seeded a `request_missing_slots.yaml` not in the
+module's own file list, since it's registered as a built-in but the spec's example
+listing only had 6 files, not 7). `app.quotes.schemas.quote_slots_complete` is now
+Module 10's authoritative definition (`company`, `product_interest`, `quantity`,
+`budget` all non-None) and takes `(facts, state)` — this **changed from the M07-session
+placeholder**, which checked different fields; Planner call sites and tests were
+updated to match. Only 3 tools are actually registered right now (`respond`, `compare`,
+`request_missing_slots`, all built into `executor.py`) — `retrieve_products`,
+`retrieve_docs`, `generate_quote`, `create_lead` have policies waiting but no
+implementation until M11/M12/M14 register themselves via `tool_registry.register(...)`
+in their own `__init__.py`.
+
 `Orchestrator.on_turn` (`app/orchestrator/orchestrator.py`) is a **documented
 placeholder that raises `NotImplementedError`** — its real spec (readme.md §12/13)
-calls directly into `FeatureFlagsService` (M09, now available), `ToolExecutor` (M10),
-`ClarificationFlow` (M13), and `MetricsRegistry` (M16). Wire it up once the remaining
-three land, in build order. One more seed file still exists purely so Planner could be
-built ahead of its owner: `app/quotes/schemas.py` (`quote_slots_complete` predicate —
-M12 owns the full Quote Builder and may refine this definition).
+calls directly into `FeatureFlagsService` (M09), `ToolExecutor` (M10) — both now
+available — plus `ClarificationFlow` (M13) and `MetricsRegistry` (M16), still pending.
+Wire it up once those two land, in build order. One more seed file still exists purely
+so Planner/Tool Executor could be built ahead of their real owners:
+`app/quotes/schemas.py` (`quote_slots_complete` — M12 owns the full Quote Builder).
 
 ## LLM provider (Module 05 detail)
 

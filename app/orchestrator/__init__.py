@@ -1,5 +1,5 @@
-"""Per-turn orchestrator (pending Modules 08-10, 13, and 16)."""
+"""Per-turn orchestrator."""
 
-from app.orchestrator.orchestrator import Orchestrator
+from app.orchestrator.orchestrator import Orchestrator, OrchestratorResult
 
-__all__ = ["Orchestrator"]
+__all__ = ["Orchestrator", "OrchestratorResult"]

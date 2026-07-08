@@ -14,6 +14,7 @@ from app.flags.schemas import FeatureFlags
 from app.llm.context import build_llm_messages
 from app.llm.factory import get_llm_client
 from app.logging_config import get_logger
+from app.observability import registry as metrics
 from app.planner.schemas import Plan
 from app.prompts.manager import prompt_manager
 from app.tools.exceptions import PlanViolationError
@@ -100,7 +101,9 @@ class ToolExecutor:
             )
             if policy.audit_log:
                 await self._write_audit_entry(session, step, plan.intent, allowed=False, reason=check.reason)
-            return ToolExecutionResult(step=step, success=False, result_summary="", error=check.reason)
+            denied = ToolExecutionResult(step=step, success=False, result_summary="", error=check.reason)
+            metrics.metrics_registry.increment_tool_result(step, False)
+            return denied
 
         try:
             tool_result = await tool_fn(session, context)
@@ -110,6 +113,8 @@ class ToolExecutor:
 
         if step in ExecutionContext.model_fields:
             setattr(context, step, tool_result)
+
+        metrics.metrics_registry.increment_tool_result(step, tool_result.success)
 
         if policy.audit_log:
             await self._write_audit_entry(
@@ -142,6 +147,13 @@ class ToolExecutor:
 
 async def _respond_tool(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult:
     """Compose the final assistant message via the configured LLM provider."""
+    if context.generate_quote and context.generate_quote.success:
+        return ToolExecutionResult(
+            step="respond",
+            success=True,
+            result_summary=context.generate_quote.result_summary,
+        )
+
     settings = get_settings()
     llm_client = get_llm_client(settings)
     system_prompt = prompt_manager.get("system", "base", "1")

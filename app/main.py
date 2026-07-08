@@ -183,6 +183,12 @@ def create_app() -> FastAPI:
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
+    from app.api.chat import router as chat_router
+    from app.observability.router import router as observability_router
+
+    app.include_router(chat_router)
+    app.include_router(observability_router)
+
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         """Return process liveness without dependency checks."""

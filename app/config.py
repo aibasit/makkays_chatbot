@@ -269,6 +269,8 @@ class RagSettings(RedactedModel):
 
     search_limit_default: int = 5
     search_limit_max: int = 10
+    qdrant_collection_products: str = "products_v1"
+    qdrant_collection_documents: str = "documents_v1"
 
 
 class PromptSettings(RedactedModel):
@@ -401,6 +403,14 @@ class _FlatSettings(BaseSettings):
     max_clarification_rounds: int = Field(default=2, validation_alias="MAX_CLARIFICATION_ROUNDS")
     rag_search_limit_default: int = Field(default=5, validation_alias="RAG_SEARCH_LIMIT_DEFAULT")
     rag_search_limit_max: int = Field(default=10, validation_alias="RAG_SEARCH_LIMIT_MAX")
+    qdrant_collection_products: str = Field(
+        default="products_v1",
+        validation_alias="QDRANT_COLLECTION_PRODUCTS",
+    )
+    qdrant_collection_documents: str = Field(
+        default="documents_v1",
+        validation_alias="QDRANT_COLLECTION_DOCUMENTS",
+    )
     crm_max_retry_attempts: int = Field(default=5, validation_alias="CRM_MAX_RETRY_ATTEMPTS")
     crm_retry_worker_interval_seconds: int = Field(
         default=60,
@@ -489,6 +499,8 @@ class Settings(BaseSettings):
             rag=RagSettings(
                 search_limit_default=flat.rag_search_limit_default,
                 search_limit_max=flat.rag_search_limit_max,
+                qdrant_collection_products=flat.qdrant_collection_products,
+                qdrant_collection_documents=flat.qdrant_collection_documents,
             ),
             prompts=PromptSettings(library_path=flat.prompt_library_path),
             tools=ToolSettings(policy_directory=flat.security_policy_dir),

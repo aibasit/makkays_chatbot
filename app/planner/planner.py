@@ -27,6 +27,7 @@ REGISTERED_STEPS = frozenset(
 )
 
 _FLAG_GATED_STEPS: dict[str, str] = {
+    "retrieve_products": "enable_rag",
     "retrieve_docs": "enable_rag",
     "generate_quote": "enable_quotes",
     "request_missing_slots": "enable_quotes",

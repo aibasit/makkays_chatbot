@@ -2,6 +2,15 @@ tool_name: retrieve_products
 allowed_intents:
   - sales_inquiry
   - quote_request
+  - product_comparison
+  - product_compatibility
+  - accessory_recommendation
+  - product_finder_by_problem
+  - product_alternative
+  - product_recommendation_wizard
+  - use_case_recommendation
+  - availability_inquiry
+  - solution_builder
 required_state: []
 required_slots: []
 rate_limit: "20/min"

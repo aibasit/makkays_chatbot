@@ -2,6 +2,11 @@ tool_name: retrieve_docs
 allowed_intents:
   - sales_inquiry
   - technical_support
+  - troubleshooting
+  - installation_guidance
+  - warranty_information
+  - pdf_documentation_search
+  - specification_explainer
 required_state: []
 required_slots: []
 rate_limit: "20/min"

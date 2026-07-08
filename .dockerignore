@@ -1,0 +1,26 @@
+# Frontend (not part of the Python backend image)
+frontend/node_modules
+frontend/dist
+frontend/.env.local
+
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.venv
+venv
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Docs not needed at build time
+md files

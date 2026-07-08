@@ -65,6 +65,7 @@ yarn-error.log*
 dist/
 dist-ssr/
 *.local
+*.tsbuildinfo
 
 # --- IDEs and Editors ---
 .vscode/

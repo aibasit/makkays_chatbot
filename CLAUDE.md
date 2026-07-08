@@ -30,28 +30,47 @@ inside an earlier module.
 | 08 | Prompt Manager (`app/prompts/`, `prompt_library/`) | ✅ Done |
 | 09 | Feature Flags (`app/flags/`) | ✅ Done |
 | 10 | Security Policy Registry & Tool Executor (`app/tools/`, `security_policies/`) | ✅ Done |
-| 11 | RAG Engine (BGE-M3, Qdrant) | ⬅️ **Next / not started** |
-| 12 | Quote Builder & PDF Export | Not started |
-| 13 | Clarification Template Library | Not started |
-| 14 | CRM Integration, Retry Queue & Email (Resend) | Not started |
-| 15 | Public API & Widget Session | Not started |
-| 16 | Observability | Not started |
-| 17 | Frontend (React/TS/Vite widget) | Not started |
-| 18 | Product Intelligence Service | Not started |
+| 11 | RAG Engine (BGE-M3, Qdrant) (`app/rag/`, `scripts/ingest_products_and_docs.py`) | ✅ Done |
+| 12 | Quote Builder & PDF Export (`app/quotes/`, `scripts/seed_pricing.py`) | ✅ Done |
+| 13 | Clarification Template Library (`app/clarification/`, `prompt_library/clarification/`) | ✅ Done |
+| 14 | CRM Integration, Retry Queue & Email (Resend) (`app/crm/`) | Done |
+| 15 | Public API & Widget Session (`app/api/chat.py`) | Done |
+| 16 | Observability (`app/observability/`) | Done |
+| 17 | Frontend (React/TS/Vite widget) (`frontend/`) | ✅ Done |
+| 18 | Product Intelligence Service | ⬅️ **Next / not started** |
 | 19 | Solution Builder & Recommendation Wizard | Not started |
 | 20 | Human Handoff & Extended Lead Qualification | Not started |
 | 21 | Multi-language (EN/UR/AR) | Not started |
 | 22 | Availability & ERP Bridge | Not started |
 
 Alembic migrations so far: `0001_session_state`, `0002_conversation_turns`,
-`0003_feature_flags`, `0004_tool_audit_log`.
+`0003_feature_flags`, `0004_tool_audit_log`, `0005_rag_catalog`, `0006_quotes`,
+`0007_crm_leads`.
 
-**Start here next session:** implement Module 11 (RAG Engine) per
-[md files/11-rag-engine.md](md%20files/11-rag-engine.md) — it's the next unblocked
-module. It's not one of the five things `Orchestrator.on_turn` is still waiting on
-(only M13 Clarification and M16 Metrics remain for that), but it's next in build order
-and it's what will let `retrieve_products`/`retrieve_docs` become real registered tools
-instead of absent from `ToolRegistry`.
+**Start here next session:** implement Module 18 (Product Intelligence Service) per
+[md files/18-product-intelligence.md](md%20files/18-product-intelligence.md). Module 16
+provides `app.observability`, `/metrics`, `/ready`, Prometheus counters/histograms, and
+inline metrics from routing, tools, RAG, quotes, CRM, and `/chat` latency.
+
+### Module 17 detail (frontend)
+
+`frontend/` is a React 18 + TypeScript + Vite + Tailwind + TanStack Query + React
+Router + Axios chat widget, run directly on the host with Node (v18+) — it is **not**
+part of the Python Docker image and has no Dockerfile of its own. `npm install` then
+`npm run dev` (port 5173) or `npm test` (Vitest) from inside `frontend/`.
+`frontend/.env.local` (gitignored) must hold `VITE_API_BASE_URL` and
+`VITE_SITE_API_KEY` (same value as backend `.env`'s `SITE_API_KEY`) — see
+`frontend/.env.example`. `useChat` (`src/hooks/useChat.ts`) owns optimistic send, the
+429 cooldown countdown, and error/retry state; `api/client.ts` sets
+`withCredentials: true` (required for the cross-port session cookie in local dev) and
+the `X-Site-Api-Key` header. `types/generated.ts` is produced by
+**`python scripts/generate_typescript_types.py`** (introspects `app.api.chat`'s
+`ChatRequest`/`ChatResponse` Pydantic models) — this script didn't exist before this
+session even though Module 15's spec called for it; re-run it whenever those models
+change. `types/chat.ts` is hand-maintained and re-exports the generated types plus the
+frontend-only `ChatMessage` shape, so regeneration never clobbers hand-written code.
+Also added a root `.dockerignore` (didn't exist before) once `frontend/node_modules`
+started bloating every backend build context by 100+MB.
 
 ### Module 06/07/08/09/10 detail and the Orchestrator caveat
 
@@ -97,19 +116,14 @@ listing only had 6 files, not 7). `app.quotes.schemas.quote_slots_complete` is n
 Module 10's authoritative definition (`company`, `product_interest`, `quantity`,
 `budget` all non-None) and takes `(facts, state)` — this **changed from the M07-session
 placeholder**, which checked different fields; Planner call sites and tests were
-updated to match. Only 3 tools are actually registered right now (`respond`, `compare`,
-`request_missing_slots`, all built into `executor.py`) — `retrieve_products`,
-`retrieve_docs`, `generate_quote`, `create_lead` have policies waiting but no
-implementation until M11/M12/M14 register themselves via `tool_registry.register(...)`
-in their own `__init__.py`.
+updated to match. Built-in tools (`respond`, `compare`, `request_missing_slots`) are
+registered from `executor.py`; M11 registers `retrieve_products`/`retrieve_docs`; M12
+registers `generate_quote`; M14 registers `create_lead`.
 
-`Orchestrator.on_turn` (`app/orchestrator/orchestrator.py`) is a **documented
-placeholder that raises `NotImplementedError`** — its real spec (readme.md §12/13)
-calls directly into `FeatureFlagsService` (M09), `ToolExecutor` (M10) — both now
-available — plus `ClarificationFlow` (M13) and `MetricsRegistry` (M16), still pending.
-Wire it up once those two land, in build order. One more seed file still exists purely
-so Planner/Tool Executor could be built ahead of their real owners:
-`app/quotes/schemas.py` (`quote_slots_complete` — M12 owns the full Quote Builder).
+`Orchestrator.on_turn` (`app/orchestrator/orchestrator.py`) is now wired for the
+public API path: load facts/state/recent turns, extract facts, resolve flags, classify,
+clarify when confidence is low, plan, execute tools, record the turn, and commit. Module
+16 metrics are wired around this flow without changing its control structure.
 
 ## LLM provider (Module 05 detail)
 
@@ -161,6 +175,14 @@ Source is baked into the image at build time (no volume mount), so **rebuild bef
 testing** whenever app code changes: `docker compose build backend` first, then run
 the command above (or `docker compose up -d backend` to also refresh the live container).
 
+Since Module 11, `requirements.txt` pulls in `FlagEmbedding`, which drags in `torch`
+(a ~530MB wheel) — a clean `docker compose build backend` can take 30-60+ minutes on a
+slow connection, with long stretches of no visible output while pip resolves metadata.
+Don't assume a build is hung; check `docker image inspect makkays_chatbot-backend:latest
+--format '{{.Created}}'` against the current time before concluding a build never
+finished. Never run multiple `docker compose build` invocations concurrently (they
+compete for bandwidth and CPU) — use a single backgrounded build and wait for it.
+
 ## Conventions (binding across all modules — from readme.md §3)
 
 - Every table/query is tenant-scoped via `tenant_id`; local dev uses `DEFAULT_TENANT_ID`.
@@ -179,8 +201,8 @@ the command above (or `docker compose up -d backend` to also refresh the live co
 
 - [system_flowchart.md](system_flowchart.md) — architecture flowchart.
 - [I power documents/](I%20power%20documents/) — real product/model data
-  (`makkays_ipower_products.csv`, `makkays_ipower_models.csv`, `.md`) used by RAG once
-  M11 is built.
+  (`makkays_ipower_products.csv`, `makkays_ipower_models.csv`, `.md`) ingested via
+  `scripts/ingest_products_and_docs.py` for M11's RAG catalog.
 
 ## User preferences
 

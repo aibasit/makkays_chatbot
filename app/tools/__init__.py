@@ -52,6 +52,16 @@ __all__ = [
 
 def register_hooks(app: Any, settings: Any) -> None:
     """Load Security Policies, then fail fast if any registered tool lacks one."""
+    # `import app.rag` would rebind the local name `app` to the top-level `app`
+    # package (that's how `import x.y` binds `x`), clobbering the FastAPI `app`
+    # parameter for the rest of this function — `from app import rag` avoids it.
+    from app import rag  # noqa: F401
+    from app.crm.service import create_lead_tool
+    from app.quotes.builder import generate_quote_tool
+
+    tool_registry.register("create_lead", create_lead_tool, flag_name="enable_crm")
+    tool_registry.register("generate_quote", generate_quote_tool, flag_name="enable_quotes")
+
     policy_registry.load()
     policy_registry.startup_self_check(tool_registry.registered_tool_names())
     app.state.tool_registry = tool_registry

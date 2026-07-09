@@ -58,10 +58,16 @@ class FakeProductRepository:
         self,
         candidate_ids: list[uuid.UUID] | None,
         products: dict[uuid.UUID, Any],
+        *,
+        specs: dict[uuid.UUID, list[Any]] | None = None,
+        list_products_result: list[Any] | None = None,
     ) -> None:
         self.candidate_ids = candidate_ids
         self.products = products
+        self.specs = specs or {}
+        self.list_products_result = list_products_result or []
         self.filters_seen: ExtractedFilters | None = None
+        self.list_products_calls: list[dict[str, Any]] = []
 
     async def get_distinct_values(
         self,
@@ -83,6 +89,24 @@ class FakeProductRepository:
         product_ids: list[uuid.UUID],
     ) -> dict[uuid.UUID, Any]:
         return self.products
+
+    async def get_specs_for_products(
+        self,
+        product_ids: list[uuid.UUID],
+        tenant_id: uuid.UUID,
+    ) -> dict[uuid.UUID, list[Any]]:
+        return {pid: self.specs[pid] for pid in product_ids if pid in self.specs}
+
+    async def list_products(
+        self,
+        tenant_id: uuid.UUID,
+        *,
+        category: str | None = None,
+        brand: str | None = None,
+        limit: int,
+    ) -> list[Any]:
+        self.list_products_calls.append({"category": category, "brand": brand, "limit": limit})
+        return self.list_products_result
 
 
 class FakeDocumentRepository:
@@ -115,6 +139,7 @@ def _session(
     *,
     product_interest: str = "Cisco switch",
     intent: str = "sales_inquiry",
+    message: str = "",
 ) -> SessionContext:
     return SessionContext(
         tenant_id=tenant_id,
@@ -129,6 +154,7 @@ def _session(
             session_id="s1",
             current_intent=intent,
         ),
+        message=message,
     )
 
 
@@ -239,6 +265,65 @@ async def test_retrieve_docs_scoped_to_tenant_when_no_product_ids_in_context() -
     assert qdrant.calls[0]["payload_filter"]["must"] == [
         {"key": "tenant_id", "match": {"value": str(tenant_id)}}
     ]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_products_list_all_bypasses_qdrant() -> None:
+    """"List all your UPS options" must not be silently truncated by vector top-K."""
+    tenant_id = uuid.uuid4()
+    product_ids = [uuid.uuid4() for _ in range(12)]
+    listed_products = [
+        SimpleNamespace(id=pid, name=f"UPS Model {i}", brand="Makkays", category="UPS Solutions")
+        for i, pid in enumerate(product_ids)
+    ]
+    qdrant = FakeQdrant([FakePoint({"tenant_id": str(tenant_id), "product_id": str(uuid.uuid4())})])
+    product_repository = FakeProductRepository(None, {}, list_products_result=listed_products)
+    service = RetrievalService(
+        db_session=None,  # type: ignore[arg-type]
+        settings=_settings(),
+        product_repository=product_repository,
+        document_repository=FakeDocumentRepository(),
+        filter_extractor=FilterExtractor(categories={"ups"}),
+        embedder=FakeEmbedder(),  # type: ignore[arg-type]
+        qdrant=qdrant,  # type: ignore[arg-type]
+    )
+
+    result = await service.retrieve_products(
+        _session(tenant_id, message="list all your UPS options"),
+        ExecutionContext(),
+    )
+
+    assert result.success is True
+    assert len(result.product_ids) == 12
+    assert qdrant.calls == []  # Qdrant never touched for a list-all request
+    assert product_repository.list_products_calls[0]["category"] == "ups"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_products_attaches_full_specs_to_results() -> None:
+    """The respond step needs real spec data to ground a recommendation in —
+    not just name/brand/category, which is all it used to get."""
+    tenant_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    product = SimpleNamespace(id=product_id, name="T-4111 UPS", brand="Makkays", category="UPS Solutions")
+    spec = SimpleNamespace(spec_key="capacity_range", spec_value="1-10kVA")
+    qdrant = FakeQdrant([FakePoint({"tenant_id": str(tenant_id), "product_id": str(product_id)})])
+    service = RetrievalService(
+        db_session=None,  # type: ignore[arg-type]
+        settings=_settings(),
+        product_repository=FakeProductRepository(
+            [product_id], {product_id: product}, specs={product_id: [spec]}
+        ),
+        document_repository=FakeDocumentRepository(),
+        filter_extractor=FilterExtractor(brands={"Makkays"}, categories={"switch"}),
+        embedder=FakeEmbedder(),  # type: ignore[arg-type]
+        qdrant=qdrant,  # type: ignore[arg-type]
+    )
+
+    result = await service.retrieve_products(_session(tenant_id), ExecutionContext())
+
+    parsed = json.loads(result.result_summary)
+    assert parsed[0]["specs"] == [{"key": "capacity_range", "value": "1-10kVA"}]
 
 
 def test_bge_m3_embedder_produces_1024_dimensional_vectors() -> None:

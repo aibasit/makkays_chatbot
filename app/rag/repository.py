@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.rag.capacity import parse_capacity_range
 from app.rag.models import Document, Product, ProductSpec
 from app.rag.schemas import ExtractedFilters
 
@@ -53,6 +54,14 @@ class ProductRepository:
             use_case = f"%{filters.use_case.lower()}%"
             conditions.append(func.lower(func.coalesce(Product.description, "")).like(use_case))
 
+        if filters.capacity_requirement is not None:
+            conditions.append(Product.capacity_min.is_not(None))
+            conditions.append(Product.capacity_max.is_not(None))
+            conditions.append(Product.capacity_min <= filters.capacity_requirement)
+            conditions.append(Product.capacity_max >= filters.capacity_requirement)
+            if filters.capacity_unit:
+                conditions.append(func.upper(Product.capacity_unit) == filters.capacity_unit.upper())
+
         stmt = select(Product.id).where(*conditions)
         for key, value in filters.spec_filters.items():
             spec_match = (
@@ -69,6 +78,50 @@ class ProductRepository:
 
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_products(
+        self,
+        tenant_id: UUID,
+        *,
+        category: str | None = None,
+        brand: str | None = None,
+        limit: int,
+    ) -> list[Product]:
+        """Return every product matching an optional category/brand, up to `limit`.
+
+        Bypasses vector search entirely — for "list all your UPS options"-style
+        requests, top-K semantic search would silently truncate a 30+ product
+        category down to whatever the default result limit is.
+        """
+        conditions: list[Any] = [Product.tenant_id == tenant_id]
+        if brand:
+            conditions.append(func.lower(Product.brand) == brand.lower())
+        if category:
+            conditions.append(func.lower(Product.category) == category.lower())
+        result = await self.session.execute(
+            select(Product).where(*conditions).order_by(Product.name).limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def get_specs_for_products(
+        self,
+        product_ids: Iterable[UUID],
+        tenant_id: UUID,
+    ) -> dict[UUID, list[ProductSpec]]:
+        """Return spec rows keyed by product ID; products with no specs are omitted."""
+        ids = list(product_ids)
+        if not ids:
+            return {}
+        result = await self.session.execute(
+            select(ProductSpec).where(
+                ProductSpec.tenant_id == tenant_id,
+                ProductSpec.product_id.in_(ids),
+            )
+        )
+        grouped: dict[UUID, list[ProductSpec]] = {}
+        for spec in result.scalars().all():
+            grouped.setdefault(spec.product_id, []).append(spec)
+        return grouped
 
     async def get_by_ids(self, tenant_id: UUID, product_ids: Iterable[UUID]) -> dict[UUID, Product]:
         """Return products keyed by ID."""
@@ -91,13 +144,28 @@ class ProductRepository:
         description: str | None,
         specs: list[dict[str, Any]],
     ) -> Product:
-        """Create one product and its specs for local ingestion."""
+        """Create one product and its specs for local ingestion.
+
+        Structured capacity (capacity_min/max/unit) is auto-derived from a
+        "capacity_range" spec entry, if one is present and parseable — callers
+        never need to compute it themselves.
+        """
+        capacity = None
+        for spec in specs:
+            key = spec.get("key") or spec.get("spec_key")
+            if key and str(key).lower() == "capacity_range":
+                value = spec.get("value") or spec.get("spec_value")
+                capacity = parse_capacity_range(str(value) if value is not None else None)
+                break
         product = Product(
             tenant_id=tenant_id,
             name=name,
             brand=brand,
             category=category,
             description=description,
+            capacity_min=capacity.min_value if capacity else None,
+            capacity_max=capacity.max_value if capacity else None,
+            capacity_unit=capacity.unit if capacity else None,
         )
         self.session.add(product)
         await self.session.flush()

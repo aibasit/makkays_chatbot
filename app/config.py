@@ -276,6 +276,9 @@ class RagSettings(RedactedModel):
     search_limit_max: int = 10
     qdrant_collection_products: str = "products_v1"
     qdrant_collection_documents: str = "documents_v1"
+    # Cap for an exhaustive "list all your UPS options" request, which bypasses
+    # vector top-K entirely — see RetrievalService.retrieve_products.
+    list_all_limit: int = 50
 
 
 class SolutionBuilderSettings(RedactedModel):
@@ -431,6 +434,7 @@ class _FlatSettings(BaseSettings):
     max_clarification_rounds: int = Field(default=2, validation_alias="MAX_CLARIFICATION_ROUNDS")
     rag_search_limit_default: int = Field(default=5, validation_alias="RAG_SEARCH_LIMIT_DEFAULT")
     rag_search_limit_max: int = Field(default=10, validation_alias="RAG_SEARCH_LIMIT_MAX")
+    rag_list_all_limit: int = Field(default=50, validation_alias="RAG_LIST_ALL_LIMIT")
     qdrant_collection_products: str = Field(
         default="products_v1",
         validation_alias="QDRANT_COLLECTION_PRODUCTS",
@@ -550,6 +554,7 @@ class Settings(BaseSettings):
                 search_limit_max=flat.rag_search_limit_max,
                 qdrant_collection_products=flat.qdrant_collection_products,
                 qdrant_collection_documents=flat.qdrant_collection_documents,
+                list_all_limit=flat.rag_list_all_limit,
             ),
             solution_builder=SolutionBuilderSettings(
                 large_device_threshold=flat.large_device_threshold,

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +31,14 @@ class Product(Base):
     brand: Mapped[str | None] = mapped_column(Text, nullable=True)
     category: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured capacity/power range, parsed from the free-text capacity_range
+    # spec (app.rag.capacity) so a real numeric range query is possible — see
+    # ProductRepository.find_by_filters. Both bounds share one unit ("KVA"/"A");
+    # products with no parseable capacity (e.g. batteries, rated in Ah) leave
+    # all three columns null and are simply excluded from capacity matching.
+    capacity_min: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    capacity_max: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    capacity_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

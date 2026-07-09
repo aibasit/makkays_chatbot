@@ -60,7 +60,39 @@ class RetrievalService:
             query,
             session.tenant_id,
             intent=session.conversation_state.current_intent,
+            raw_message=session.message,
         )
+
+        if filters.list_all:
+            # An exhaustive listing request — top-K vector search would silently
+            # truncate a large category, so bypass Qdrant entirely.
+            products = await self.product_repository.list_products(
+                session.tenant_id,
+                category=filters.category,
+                brand=filters.brand,
+                limit=self._list_all_limit(),
+            )
+            results = await self._map_products_direct(session.tenant_id, products)
+            logger.debug(
+                "rag_products_listed",
+                extra={
+                    "tenant_id": str(session.tenant_id),
+                    "category": filters.category,
+                    "brand": filters.brand,
+                    "result_count": len(results),
+                },
+            )
+            metrics.metrics_registry.increment_rag_hit(hit=bool(results))
+            return ToolExecutionResult(
+                step="retrieve_products",
+                success=True,
+                result_summary=json.dumps(
+                    [result.model_dump(mode="json") for result in results],
+                    separators=(",", ":"),
+                ),
+                product_ids=[result.product_id for result in results],
+            )
+
         candidate_ids = await self.product_repository.find_by_filters(session.tenant_id, filters)
         vector = await self._embed_query(query)
         payload_filter = _product_qdrant_filter(session.tenant_id, candidate_ids)
@@ -166,11 +198,15 @@ class RetrievalService:
             min(self.settings.rag.search_limit_default, self.settings.rag.search_limit_max),
         )
 
+    def _list_all_limit(self) -> int:
+        return max(1, self.settings.rag.list_all_limit)
+
     async def _map_product_points(self, tenant_id: UUID, points: list[Any]) -> list[ProductResult]:
         payloads = [_point_payload(point) for point in points]
         ids = [_uuid_from_payload(payload, "product_id") for payload in payloads]
         ids = [item for item in ids if item is not None]
         products = await self.product_repository.get_by_ids(tenant_id, ids)
+        specs_by_product = await self.product_repository.get_specs_for_products(ids, tenant_id)
         results: list[ProductResult] = []
         for point, payload in zip(points, payloads, strict=False):
             product_id = _uuid_from_payload(payload, "product_id")
@@ -184,9 +220,26 @@ class RetrievalService:
                     brand=(product.brand if product else payload.get("brand")),
                     category=(product.category if product else payload.get("category")),
                     score=float(getattr(point, "score", payload.get("score", 0.0)) or 0.0),
+                    specs=_specs_to_dicts(specs_by_product.get(product_id, [])),
                 )
             )
         return results
+
+    async def _map_products_direct(self, tenant_id: UUID, products: list[Any]) -> list[ProductResult]:
+        """Build ProductResults straight from SQL rows, for the list-all path (no Qdrant)."""
+        ids = [product.id for product in products]
+        specs_by_product = await self.product_repository.get_specs_for_products(ids, tenant_id)
+        return [
+            ProductResult(
+                product_id=product.id,
+                name=product.name,
+                brand=product.brand,
+                category=product.category,
+                score=1.0,
+                specs=_specs_to_dicts(specs_by_product.get(product.id, [])),
+            )
+            for product in products
+        ]
 
     async def _map_document_points(self, tenant_id: UUID, points: list[Any]) -> list[DocResult]:
         payloads = [_point_payload(point) for point in points]
@@ -248,6 +301,10 @@ def _query_from_session(session: SessionContext) -> str:
     if query is None or not query.strip():
         raise RagQueryError("RAG retrieval requires product_interest or last_question")
     return query.strip()
+
+
+def _specs_to_dicts(specs: list[Any]) -> list[dict[str, str]]:
+    return [{"key": spec.spec_key, "value": spec.spec_value} for spec in specs]
 
 
 def _product_qdrant_filter(tenant_id: UUID, product_ids: list[UUID] | None) -> dict[str, Any]:

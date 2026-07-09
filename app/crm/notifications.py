@@ -10,7 +10,9 @@ import httpx
 
 from app.config import Settings
 from app.crm.schemas import LeadRead
+from app.handoff.schemas import HandoffRead
 from app.quotes.schemas import QuoteResult
+from app.session.schemas import FactsSchema
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,33 @@ class NotificationService:
             attachments=[attachment],
         )
 
+    async def send_handoff_notification(self, handoff: HandoffRead, facts: FactsSchema) -> bool:
+        """Notify the selected internal team about a human handoff."""
+        subject = f"Chat handoff {handoff.reference_id}: {handoff.target_team}"
+        lines = [
+            "A customer requested human handoff from the AI Sales Engineer.",
+            f"Reference: {handoff.reference_id}",
+            f"Team: {handoff.target_team}",
+            f"Status: {handoff.status}",
+            f"Company: {facts.company or 'Unknown'}",
+            f"Contact: {handoff.contact_name or 'Unknown'}",
+            f"Email: {handoff.contact_email or 'Not provided'}",
+            f"Phone: {handoff.contact_phone or 'Not provided'}",
+            f"Product interest: {facts.product_interest or 'Not provided'}",
+            f"Industry: {facts.industry or 'Not provided'}",
+            f"Project size: {facts.project_size or 'Not provided'}",
+            f"Location: {getattr(facts, 'location', None) or 'Not provided'}",
+            f"Timeline: {getattr(facts, 'timeline', None) or 'Not provided'}",
+            "",
+            "Conversation:",
+            *format_handoff_transcript(handoff),
+        ]
+        return await self._send_email(
+            to=self.settings.resend.from_email,
+            subject=subject,
+            text="\n".join(lines),
+        )
+
     async def _send_email(
         self,
         *,
@@ -93,3 +122,14 @@ class NotificationService:
             return False
         logger.info("resend_email_sent", extra={"subject": subject, "to": to})
         return True
+
+
+def format_handoff_transcript(handoff: HandoffRead) -> list[str]:
+    """Render a compact text transcript from the stored export."""
+    lines: list[str] = []
+    for item in handoff.conversation_export:
+        role = str(item.get("role", "unknown")).upper()
+        content = str(item.get("content", "")).strip()
+        if content:
+            lines.append(f"{role}: {content}")
+    return lines or ["No prior turns were available."]

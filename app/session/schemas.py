@@ -15,6 +15,9 @@ FACT_FIELDS: tuple[str, ...] = (
     "industry",
     "product_interest",
     "project_size",
+    "location",
+    "timeline",
+    "is_decision_maker",
     "quantity",
     "contact_name",
     "contact_email",
@@ -32,6 +35,9 @@ STATE_FIELDS: tuple[str, ...] = (
     "last_question",
     "spec_question_detected",
     "contact_info_captured",
+    "handoff_target",
+    "language_code",
+    "language_override",
 )
 
 
@@ -47,6 +53,9 @@ class FactsSchema(BaseModel):
     industry: str | None = None
     product_interest: str | None = None
     project_size: str | None = None
+    location: str | None = None
+    timeline: str | None = None
+    is_decision_maker: bool | None = None
     quantity: int | None = None
     contact_name: str | None = None
     contact_email: str | None = None
@@ -61,6 +70,9 @@ class FactsUpdate(BaseModel):
     industry: str | None = None
     product_interest: str | None = None
     project_size: str | None = None
+    location: str | None = None
+    timeline: str | None = None
+    is_decision_maker: bool | None = None
     quantity: int | None = None
     contact_name: str | None = None
     contact_email: str | None = None
@@ -92,6 +104,21 @@ class ConversationStateSchema(BaseModel):
     last_question: str | None = None
     spec_question_detected: bool = False
     contact_info_captured: bool = False
+    handoff_target: str | None = None
+    language_code: str = "en"
+    language_override: bool = False
+
+    @field_validator("language_code", mode="before")
+    @classmethod
+    def default_language_code(cls, value: Any) -> str:
+        """Treat missing ORM/default values as English."""
+        return "en" if value is None else str(value)
+
+    @field_validator("language_override", mode="before")
+    @classmethod
+    def default_language_override(cls, value: Any) -> bool:
+        """Treat missing ORM/default values as no explicit override."""
+        return False if value is None else bool(value)
 
     @model_validator(mode="after")
     def validate_current_plan_step(self) -> "ConversationStateSchema":
@@ -117,6 +144,9 @@ class ConversationStateUpdate(BaseModel):
     last_question: str | None = None
     spec_question_detected: bool | None = None
     contact_info_captured: bool | None = None
+    handoff_target: str | None = None
+    language_code: str | None = None
+    language_override: bool | None = None
 
     @field_validator("current_plan_step")
     @classmethod

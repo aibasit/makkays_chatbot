@@ -26,6 +26,9 @@ class SessionFacts(Base):
     industry: Mapped[str | None] = mapped_column(Text, nullable=True)
     product_interest: Mapped[str | None] = mapped_column(Text, nullable=True)
     project_size: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    timeline: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_decision_maker: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     contact_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     contact_email: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -71,6 +74,9 @@ class ConversationState(Base):
         nullable=False,
         server_default="false",
     )
+    handoff_target: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language_code: Mapped[str] = mapped_column(Text, nullable=False, server_default="en")
+    language_override: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

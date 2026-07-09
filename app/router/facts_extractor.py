@@ -30,7 +30,14 @@ _BUDGET_PATTERN = re.compile(r"budget\s*(?:of|is|:)?\s*\$?\s*([\d,]+(?:\.\d+)?)\
 _COMPANY_PATTERN = re.compile(r"(?:company is|i work at|i'm from|we are|at)\s+([A-Z][\w&.,' -]{1,80}?)(?:\.|,|$)")
 
 # Fields the LLM may fill when deterministic extraction found nothing for them.
-FACT_LLM_FIELDS: tuple[str, ...] = ("company", "industry", "product_interest", "project_size")
+FACT_LLM_FIELDS: tuple[str, ...] = (
+    "company",
+    "industry",
+    "product_interest",
+    "project_size",
+    "location",
+    "timeline",
+)
 
 _MIN_LLM_EXTRACTION_MESSAGE_LENGTH = 15
 

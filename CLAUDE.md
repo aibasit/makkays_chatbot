@@ -260,6 +260,43 @@ public API path: load facts/state/recent turns, extract facts, resolve flags, cl
 clarify when confidence is low, plan, execute tools, record the turn, and commit. Module
 16 metrics are wired around this flow without changing its control structure.
 
+**Two critical bugs found via live user testing (fixed, see commit "Fix critical
+chatbot bugs"), not caught by the unit/integration suite because those use fakes that
+never exercise a real multi-turn conversation:**
+
+1. `FactsExtractor`'s LLM-sourced conflict resolution used to *always* keep the old
+   value once a field was set, regardless of how explicitly the user corrected
+   themselves later (e.g. "No, I need a UPS" after an earlier camera mention) — the
+   bot would get permanently stuck on the first product ever mentioned, for the rest
+   of the session. Fixed with `_explicit_in_message()`: a conflicting value now
+   replaces the old one when a meaningful word of it appears in the *current*
+   message, matching readme.md §6's actual contract ("explicit in the latest user
+   message"), not just always preserving.
+2. `_respond_tool` (the built-in `respond` step in `app/tools/executor.py`) used to
+   call `build_llm_messages` with only `facts`/`conversation_state` — dropping the
+   actual current user message, prior turns, and retrieved RAG sources entirely. This
+   directly contradicted Module 10's own spec ("`respond` calls the LLM with full
+   context"). The practical effect: the LLM composing the final reply couldn't tell
+   it had already asked something (repeated questions), couldn't see what the user
+   literally said (broke understanding of code-switched/Roman-Urdu input), and had
+   no grounding in the real catalog (hallucinated confident answers about products
+   never carried). Fixed: `SessionContext` gained a `recent_turns: tuple[ConversationTurnRead, ...]`
+   field (populated by the Orchestrator from the same turns it already loads for
+   FactsExtractor/Router), and `_respond_tool` now passes `recent_turns`,
+   `retrieved_sources` (parsed from `retrieve_products`/`retrieve_docs`' JSON
+   `result_summary`), and `latest_user_message=session.message` through.
+
+Also added a first-turn greeting instruction to `prompt_library/system/base_v1.md`
+(edited in place — version "1" is pinned at the `app/tools/executor.py:189` call
+site, so there's no separate `base_v2.md` to create).
+
+**Known secondary gap, not yet fixed:** `_extract_deterministic`'s quantity regex
+(`app/router/facts_extractor.py`) only matches `"<N> units/pcs/pieces/qty/quantity"` —
+natural phrasing like "10 computers" or "15 employees" silently fails to extract a
+quantity at all (falls through to the LLM extractor, which may or may not catch it).
+Low severity compared to the two bugs above; flagged for a future pass if quantity
+capture proves unreliable in further testing.
+
 ## LLM provider (Module 05 detail)
 
 MVP runs against **Groq Cloud** (`api.groq.com`, OpenAI-compatible), not local Ollama —

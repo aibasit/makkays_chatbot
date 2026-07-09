@@ -18,7 +18,7 @@ export default function ClarificationOptions({ message, onSelect }: Clarificatio
     .trim();
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg bg-gray-100 px-4 py-3 text-sm text-gray-900">
+    <div className="flex animate-message-in flex-col gap-2 rounded-2xl rounded-bl-sm border border-slate-100 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm">
       {introText && <p>{introText}</p>}
       <div className="flex flex-wrap gap-2">
         {optionLines.map((line, index) => {
@@ -29,7 +29,7 @@ export default function ClarificationOptions({ message, onSelect }: Clarificatio
               type="button"
               data-testid="clarification-option"
               onClick={() => onSelect(optionText)}
-              className="rounded-full border border-blue-500 px-3 py-1 text-blue-600 hover:bg-blue-50"
+              className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-blue-700 transition-colors hover:border-blue-400 hover:bg-blue-100"
             >
               {optionText}
             </button>

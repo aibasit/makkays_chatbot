@@ -169,15 +169,16 @@ Also added a `huggingface_cache` Docker volume (`docker-compose.yml`, mounted at
 HuggingFace from scratch, since `docker compose run --rm` containers don't persist
 anything outside a named volume.
 
-**Known remaining inefficiency (not yet fixed, flagged for a future session):** the
-Docker image installs the default PyPI `torch` wheel, which pulls in the full NVIDIA
-CUDA toolkit (`nvidia-cudnn`, `nvidia-cusparselt`, `nvidia-nccl`, `nvidia-cublas`, etc.)
-as dependencies — multiple GB of downloads this project never uses, since there's no GPU
-in this dev environment. A CPU-only `torch` wheel (via PyTorch's dedicated `/whl/cpu`
-index) would make `docker compose build backend` dramatically faster and far less prone
-to the network-flakiness failures hit repeatedly this session, but pinning the right
-CPU-wheel version needs to be verified against FlagEmbedding's torch constraint before
-committing to it — ask the user before attempting, since it changes a now-working build.
+**Fixed this session:** the Docker image used to install the default PyPI `torch`
+wheel, which pulled in the full NVIDIA CUDA toolkit (`nvidia-cudnn`, `nvidia-cusparselt`,
+`nvidia-nccl`, `nvidia-cublas`, etc.) as dependencies — multiple GB of downloads this
+project never uses, since there's no GPU in this dev environment. The `Dockerfile` now
+has a dedicated `RUN pip install --no-cache-dir torch --index-url
+https://download.pytorch.org/whl/cpu` step **before** `pip install -r requirements.txt`,
+so `FlagEmbedding`'s `torch>=1.6.0` requirement is already satisfied by the CPU-only
+build (`2.13.0+cpu`, ~192MB) by the time it's checked — no `nvidia-*` packages get
+pulled in at all. Verified: full test suite (210 passed/8 skipped) and a live `/chat`
+smoke test both pass unchanged after the switch.
 
 ### Module 17 detail (frontend)
 

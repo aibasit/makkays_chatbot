@@ -56,11 +56,15 @@ def register_hooks(app: Any, settings: Any) -> None:
     # package (that's how `import x.y` binds `x`), clobbering the FastAPI `app`
     # parameter for the rest of this function — `from app import rag` avoids it.
     from app import rag  # noqa: F401
+    from app.availability.tool import check_availability_tool
     from app.crm.service import create_lead_tool
+    from app.handoff.handoff_service import initiate_handoff_tool
     from app.quotes.builder import generate_quote_tool
 
     tool_registry.register("create_lead", create_lead_tool, flag_name="enable_crm")
     tool_registry.register("generate_quote", generate_quote_tool, flag_name="enable_quotes")
+    tool_registry.register("initiate_handoff", initiate_handoff_tool, flag_name="enable_human_handoff")
+    tool_registry.register("check_availability", check_availability_tool, flag_name="enable_availability_check")
 
     policy_registry.load()
     policy_registry.startup_self_check(tool_registry.registered_tool_names())

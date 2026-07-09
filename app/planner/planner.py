@@ -22,7 +22,19 @@ REGISTERED_STEPS = frozenset(
         "generate_quote",
         "request_missing_slots",
         "create_lead",
+        "initiate_handoff",
+        "check_availability",
         "respond",
+        # Module 18 — Product Intelligence
+        "compare_products",
+        "check_compatibility",
+        "recommend_accessories",
+        "find_alternatives",
+        "explain_specification",
+        # Module 19 — Solution Builder
+        "run_wizard",
+        "build_use_case_solution",
+        "build_solution",
     }
 )
 
@@ -32,6 +44,14 @@ _FLAG_GATED_STEPS: dict[str, str] = {
     "generate_quote": "enable_quotes",
     "request_missing_slots": "enable_quotes",
     "create_lead": "enable_crm",
+    "initiate_handoff": "enable_human_handoff",
+    "check_availability": "enable_availability_check",
+    "compare_products": "enable_product_comparison",
+    "check_compatibility": "enable_compatibility_check",
+    "recommend_accessories": "enable_accessory_recommendation",
+    "run_wizard": "enable_wizard",
+    "build_use_case_solution": "enable_use_case_recommendation",
+    "build_solution": "enable_solution_builder",
 }
 
 

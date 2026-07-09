@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
-
 from app.flags.schemas import FeatureFlags
-from app.planner.exceptions import UnknownIntentError
 from app.planner.planner import TaskPlanner
 from app.session.schemas import ConversationStateSchema, FactsSchema
 from app.shared.intent_context import IntentResult
@@ -121,11 +118,119 @@ def test_plan_out_of_scope_is_single_respond_step() -> None:
     assert plan.steps == ["respond"]
 
 
-def test_build_plan_unknown_intent_raises() -> None:
+def test_plan_human_handoff_routes_to_initiate_handoff() -> None:
     planner = TaskPlanner()
 
-    with pytest.raises(UnknownIntentError):
-        planner.build_plan(_intent("product_comparison"), _facts(), _state(), FeatureFlags())
+    plan = planner.build_plan(_intent("human_handoff"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["initiate_handoff", "respond"]
+
+
+def test_plan_human_handoff_flag_off_falls_back_to_respond() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(
+        _intent("human_handoff"),
+        _facts(),
+        _state(),
+        FeatureFlags(enable_human_handoff=False),
+    )
+
+    assert plan.steps == ["respond"]
+
+
+def test_plan_human_handoff_is_no_longer_unknown() -> None:
+    planner = TaskPlanner()
+
+    # "human_handoff" is real (v4.2 taxonomy) but its Planner rule isn't owned by
+    # any module built so far — a genuinely unregistered intent, unlike
+    # "product_comparison" which Module 18 registered a rule for.
+    plan = planner.build_plan(_intent("human_handoff"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps[0] == "initiate_handoff"
+
+
+def test_plan_availability_inquiry_routes_to_check_availability() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(
+        _intent("availability_inquiry"),
+        _facts(),
+        _state(),
+        FeatureFlags(enable_availability_check=True),
+    )
+
+    assert plan.steps == ["retrieve_products", "check_availability", "respond"]
+
+
+def test_plan_availability_inquiry_flag_off_skips_check() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(
+        _intent("availability_inquiry"),
+        _facts(),
+        _state(),
+        FeatureFlags(enable_availability_check=False),
+    )
+
+    assert plan.steps == ["retrieve_products", "respond"]
+
+
+def test_plan_product_recommendation_wizard_routes_to_run_wizard() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("product_recommendation_wizard"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["run_wizard", "respond"]
+
+
+def test_plan_product_recommendation_wizard_flag_off_skips_run_wizard() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(
+        _intent("product_recommendation_wizard"), _facts(), _state(), FeatureFlags(enable_wizard=False)
+    )
+
+    assert plan.steps == ["respond"]
+
+
+def test_plan_use_case_recommendation_routes_to_build_use_case_solution() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("use_case_recommendation"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["build_use_case_solution", "respond"]
+
+
+def test_plan_solution_builder_slots_complete_routes_to_build_solution() -> None:
+    planner = TaskPlanner()
+    facts = _facts(product_interest="school deployment", quantity=200)
+
+    plan = planner.build_plan(_intent("solution_builder"), facts, _state(), FeatureFlags())
+
+    assert plan.steps == ["build_solution", "respond"]
+
+
+def test_plan_solution_builder_slots_incomplete_falls_back_to_run_wizard() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("solution_builder"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["run_wizard", "respond"]
+
+
+def test_plan_solution_builder_both_flags_off_is_respond_only() -> None:
+    planner = TaskPlanner()
+    facts = _facts(product_interest="school deployment", quantity=200)
+
+    plan = planner.build_plan(
+        _intent("solution_builder"),
+        facts,
+        _state(),
+        FeatureFlags(enable_solution_builder=False, enable_wizard=False),
+    )
+
+    assert plan.steps == ["respond"]
 
 
 def test_build_plan_never_returns_empty_steps() -> None:

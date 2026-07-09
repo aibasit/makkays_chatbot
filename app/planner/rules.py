@@ -10,6 +10,7 @@ from app.flags.schemas import FeatureFlags
 from app.quotes.schemas import quote_slots_complete
 from app.session.schemas import ConversationStateSchema, FactsSchema
 from app.shared.intent_context import IntentResult
+from app.solution_builder.schemas import solution_slots_complete
 
 
 def contact_info_newly_captured(state: ConversationStateSchema) -> bool:
@@ -83,6 +84,21 @@ def plan_escalation_request(
     return steps
 
 
+def plan_human_handoff(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Transfer the session to a human team."""
+    steps = []
+    if flags.enable_human_handoff:
+        steps.append("initiate_handoff")
+    steps.append("respond")
+    assert steps, "plan_human_handoff must always return at least one step"
+    return steps
+
+
 def plan_out_of_scope(
     facts: FactsSchema,
     state: ConversationStateSchema,
@@ -95,10 +111,168 @@ def plan_out_of_scope(
     return steps
 
 
+def plan_product_comparison(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Compare two or more products already surfaced by retrieval."""
+    steps = ["retrieve_products"]
+    if flags.enable_product_comparison:
+        steps.append("compare_products")
+    steps.append("respond")
+    assert steps, "plan_product_comparison must always return at least one step"
+    return steps
+
+
+def plan_product_compatibility(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Check whether two products are compatible."""
+    steps = ["retrieve_products"]
+    if flags.enable_compatibility_check:
+        steps.append("check_compatibility")
+    steps.append("respond")
+    assert steps, "plan_product_compatibility must always return at least one step"
+    return steps
+
+
+def plan_accessory_recommendation(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Recommend accessories for a product already surfaced by retrieval."""
+    steps = ["retrieve_products"]
+    if flags.enable_accessory_recommendation:
+        steps.append("recommend_accessories")
+    steps.append("respond")
+    assert steps, "plan_accessory_recommendation must always return at least one step"
+    return steps
+
+
+def plan_product_finder_by_problem(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """User describes a problem; NL search (inside retrieve_products) finds a fit."""
+    steps = ["retrieve_products", "respond"]
+    assert steps, "plan_product_finder_by_problem must always return at least one step"
+    return steps
+
+
+def plan_product_alternative(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Find a replacement/alternative for a product already surfaced by retrieval."""
+    steps = ["retrieve_products", "find_alternatives", "respond"]
+    assert steps, "plan_product_alternative must always return at least one step"
+    return steps
+
+
+def plan_specification_explainer(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Explain a technical term, grounded by retrieved docs when RAG is enabled."""
+    steps = []
+    if flags.enable_rag:
+        steps.append("retrieve_docs")
+    steps.append("explain_specification")
+    steps.append("respond")
+    assert steps, "plan_specification_explainer must always return at least one step"
+    return steps
+
+
+def plan_product_recommendation_wizard(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Guided multi-turn wizard: one question per turn until requirements are complete."""
+    steps = []
+    if flags.enable_wizard:
+        steps.append("run_wizard")
+    steps.append("respond")
+    assert steps, "plan_product_recommendation_wizard must always return at least one step"
+    return steps
+
+
+def plan_use_case_recommendation(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Build a solution from a seeded use-case profile (e.g. "school", "hospital")."""
+    steps = []
+    if flags.enable_use_case_recommendation:
+        steps.append("build_use_case_solution")
+    steps.append("respond")
+    assert steps, "plan_use_case_recommendation must always return at least one step"
+    return steps
+
+
+def plan_solution_builder(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Build a solution directly when requirements are already known; else start the wizard."""
+    steps = []
+    if flags.enable_solution_builder and solution_slots_complete(facts, state):
+        steps.append("build_solution")
+    elif flags.enable_wizard:
+        steps.append("run_wizard")
+    steps.append("respond")
+    assert steps, "plan_solution_builder must always return at least one step"
+    return steps
+
+
+def plan_availability_inquiry(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Check stock/availability for retrieved products."""
+    steps = ["retrieve_products"]
+    if flags.enable_availability_check:
+        steps.append("check_availability")
+    steps.append("respond")
+    assert steps, "plan_availability_inquiry must always return at least one step"
+    return steps
+
+
 RULE_REGISTRY = {
     "sales_inquiry": plan_sales_inquiry,
     "quote_request": plan_quote_request,
     "technical_support": plan_technical_support,
     "escalation_request": plan_escalation_request,
+    "human_handoff": plan_human_handoff,
     "out_of_scope": plan_out_of_scope,
+    "product_comparison": plan_product_comparison,
+    "product_compatibility": plan_product_compatibility,
+    "accessory_recommendation": plan_accessory_recommendation,
+    "product_finder_by_problem": plan_product_finder_by_problem,
+    "product_alternative": plan_product_alternative,
+    "specification_explainer": plan_specification_explainer,
+    "product_recommendation_wizard": plan_product_recommendation_wizard,
+    "use_case_recommendation": plan_use_case_recommendation,
+    "solution_builder": plan_solution_builder,
+    "availability_inquiry": plan_availability_inquiry,
 }

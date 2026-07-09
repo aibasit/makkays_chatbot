@@ -46,6 +46,16 @@ class ExecutionContext(BaseModel):
     retrieve_docs: ToolExecutionResult | None = None
     generate_quote: ToolExecutionResult | None = None
     create_lead: ToolExecutionResult | None = None
+    compare_products: ToolExecutionResult | None = None
+    check_compatibility: ToolExecutionResult | None = None
+    recommend_accessories: ToolExecutionResult | None = None
+    find_alternatives: ToolExecutionResult | None = None
+    explain_specification: ToolExecutionResult | None = None
+    run_wizard: ToolExecutionResult | None = None
+    build_use_case_solution: ToolExecutionResult | None = None
+    build_solution: ToolExecutionResult | None = None
+    initiate_handoff: ToolExecutionResult | None = None
+    check_availability: ToolExecutionResult | None = None
 
     def get_product_ids(self) -> list[UUID] | None:
         """Return product IDs surfaced by `retrieve_products`, if it ran and succeeded."""
@@ -60,3 +70,7 @@ class SessionContext(NamedTuple):
     session_id: str
     facts: FactsSchema
     conversation_state: ConversationStateSchema
+    # The current turn's raw user text. Defaults to "" for the many existing call
+    # sites (tests, other tool modules) that only need tenant/session/facts/state;
+    # tools that need the literal message this turn (e.g. the M19 wizard) read this.
+    message: str = ""

@@ -33,6 +33,24 @@ CRITICAL_STEPS: frozenset[str] = frozenset({"generate_quote", "create_lead"})
 # used only to phrase the deterministic missing-slots message below.
 _QUOTE_SLOT_FIELDS: tuple[str, ...] = ("company", "product_interest", "quantity", "budget")
 
+# ExecutionContext fields whose own result_summary is already a good, deterministic
+# user-facing message — `respond` passes it straight through instead of asking the
+# LLM to narrate (which can't see structured tool results anyway), checked in this
+# priority order (first successful match wins).
+_DIRECT_PASSTHROUGH_STEPS: tuple[str, ...] = (
+    "generate_quote",
+    "build_solution",
+    "build_use_case_solution",
+    "run_wizard",
+    "compare_products",
+    "check_compatibility",
+    "recommend_accessories",
+    "find_alternatives",
+    "explain_specification",
+    "initiate_handoff",
+    "check_availability",
+)
+
 
 class ToolExecutor:
     """Executes only the steps present in the current deterministic plan."""
@@ -146,13 +164,25 @@ class ToolExecutor:
 
 
 async def _respond_tool(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult:
-    """Compose the final assistant message via the configured LLM provider."""
-    if context.generate_quote and context.generate_quote.success:
+    """Compose the final assistant message via the configured LLM provider.
+
+    If a deterministic tool already ran this turn and produced a user-facing
+    summary (a quote, a comparison, a wizard question, ...), pass it straight
+    through — the LLM has no visibility into structured tool results, so asking
+    it to narrate here would either hallucinate or produce a generic, and often
+    contradictory, reply.
+    """
+    if context.initiate_handoff and context.initiate_handoff.result_summary:
         return ToolExecutionResult(
             step="respond",
             success=True,
-            result_summary=context.generate_quote.result_summary,
+            result_summary=context.initiate_handoff.result_summary,
         )
+
+    for step_name in _DIRECT_PASSTHROUGH_STEPS:
+        prior_result = getattr(context, step_name, None)
+        if prior_result is not None and prior_result.success and prior_result.result_summary:
+            return ToolExecutionResult(step="respond", success=True, result_summary=prior_result.result_summary)
 
     settings = get_settings()
     llm_client = get_llm_client(settings)

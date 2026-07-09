@@ -7,9 +7,11 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from app.availability import models as availability_models  # noqa: F401
 from app.db.base import Base
 from app.crm import models as crm_models  # noqa: F401
 from app.dependencies import get_settings
+from app.handoff import models as handoff_models  # noqa: F401
 from app.quotes import models as quote_models  # noqa: F401
 from app.rag import models as rag_models  # noqa: F401
 from app.session import models as session_models  # noqa: F401

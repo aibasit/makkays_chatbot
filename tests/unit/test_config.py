@@ -36,6 +36,9 @@ def _env_fixture_values() -> dict[str, str]:
         "CRM_PROVIDER": "local",
         "CRM_API_BASE_URL": "http://crm.local",
         "CRM_API_KEY": "crm-secret",
+        "AVAILABILITY_PROVIDER": "local",
+        "ERP_API_BASE_URL": "http://erp.local",
+        "ERP_API_KEY": "erp-secret",
         "SITE_API_KEY": "site-secret",
         "ENABLE_RAG": "true",
         "ENABLE_QUOTES": "true",
@@ -80,6 +83,8 @@ def test_settings_loads_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert settings.rag.search_limit_max == 12
     assert settings.prompts.library_path == "./prompts"
     assert settings.tools.policy_directory == "./policies"
+    assert settings.availability.provider == "local"
+    assert settings.availability.erp_api_base_url == "http://erp.local"
     assert settings.logging.log_level == "DEBUG"
     assert settings.flags.enable_rag is True
 
@@ -110,6 +115,7 @@ def test_settings_redacts_secrets_in_repr(tmp_path: Path) -> None:
     assert "qdrant-secret" not in rendered
     assert "resend-secret" not in rendered
     assert "crm-secret" not in rendered
+    assert "erp-secret" not in rendered
     assert "site-secret" not in rendered
     assert "groq-secret" not in rendered
 

@@ -80,6 +80,31 @@ SPEC_QUESTION_PATTERNS: list[str] = [
     r"\bexplain\b",
 ]
 
+# Intents whose Tier1 keywords (compare, vs, compatible with, accessory, replacement
+# for, ...) are generic English phrasing that says nothing about *which* product is
+# being discussed — "compare the MacBook Air vs Pro" matches `\bcompare\b` just as
+# well as a legitimate switch/UPS comparison. For these, Tier1 only trusts its own
+# match if the message also mentions something plausibly in Makkays' catalog;
+# otherwise it defers (returns None) to Tier2, which has the domain-scoping
+# instructions to correctly classify unrelated products as out_of_scope instead of
+# confidently misrouting into a plan that will fail against an empty catalog match.
+_DOMAIN_SENSITIVE_INTENTS: frozenset[str] = frozenset(
+    {
+        "product_comparison",
+        "product_compatibility",
+        "accessory_recommendation",
+        "product_alternative",
+        "specification_explainer",
+    }
+)
+
+_DOMAIN_KEYWORD_PATTERN = re.compile(
+    r"\b(switch(?:es)?|router|access point|wi-?fi|ups|avr|voltage regulator|"
+    r"battery|batteries|rack|cabinet|network(?:ing)?|poe|sfp|data ?center|"
+    r"makkays|i-?power|i-?connect)\b",
+    re.IGNORECASE,
+)
+
 
 class Tier1RuleEngine:
     """Deterministic keyword/regex rules producing a confident `(intent, 1.0)` or nothing."""
@@ -98,6 +123,8 @@ class Tier1RuleEngine:
             return None
 
         intent = confident[0]
+        if intent in _DOMAIN_SENSITIVE_INTENTS and not _DOMAIN_KEYWORD_PATTERN.search(lowered):
+            return None
         return IntentResult(
             intent=intent,
             confidence=1.0,

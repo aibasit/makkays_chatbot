@@ -46,6 +46,21 @@ class WizardSessionRepository:
         )
         return result.scalar_one_or_none()
 
+    async def abandon(self, tenant_id: UUID, session_id: str) -> None:
+        """Mark the active wizard session complete without producing a solution.
+
+        Used when the user clearly wants out of the wizard (asks for a human,
+        or the message reads as unrelated/dismissive) — without this, an active
+        wizard session has no way to ever end short of completion, and
+        Orchestrator.on_turn would keep force-routing every future message back
+        into it forever, ignoring anything the user actually says.
+        """
+        existing = await self.get_active(tenant_id, session_id)
+        if existing is None:
+            return
+        existing.completed = True
+        await self.session.flush()
+
     async def upsert(
         self,
         tenant_id: UUID,

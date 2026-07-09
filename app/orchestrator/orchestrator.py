@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -23,6 +24,7 @@ from app.planner.planner import TaskPlanner
 from app.prompts.manager import prompt_manager
 from app.router.facts_extractor import FactsExtractor
 from app.router.router import Router
+from app.router.rules import BASE_TIER1_RULES, TIER1_RULES_V42
 from app.session.schemas import ConversationStateUpdate
 from app.session.service import SessionStateService
 from app.shared.intent_context import IntentResult, PromptProvider
@@ -33,6 +35,40 @@ from app.tools.executor import ToolExecutor
 from app.turns.service import TurnsService
 
 logger = get_logger(__name__)
+
+# Deterministic wizard-escape check, reusing Tier1's own human/escalation
+# patterns plus an explicit cancel/dismiss keyword list (including a few common
+# Roman Urdu equivalents, since this product sees a lot of code-switched input).
+# This must stay narrow and deterministic rather than routing through the
+# general LLM classifier: a real, in-context wizard answer is often a single
+# short word ("power", "10", "small office") that the general classifier has no
+# way to distinguish from a low-confidence out_of_scope guess — using that as
+# the escape signal caused a real regression where legitimate one-word answers
+# broke the wizard.
+_WIZARD_ESCAPE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        *BASE_TIER1_RULES["escalation_request"],
+        *TIER1_RULES_V42["human_handoff"],
+        r"\bstop\b",
+        r"\bcancel\b",
+        r"\bnever ?mind\b",
+        r"\bforget it\b",
+        r"\bleave me alone\b",
+        r"\bgo away\b",
+        r"\bshut up\b",
+        r"\bbas\b",
+        r"\bchup\b",
+        r"\bdafa\b",
+        r"\bl[ae]khafa\b",
+        r"\bkhafa\b",
+    )
+)
+
+
+def _looks_like_wizard_escape(message: str) -> bool:
+    """Return whether the message is trying to get out of the wizard, not answer it."""
+    return any(pattern.search(message) for pattern in _WIZARD_ESCAPE_PATTERNS)
 
 
 class OrchestratorResult(BaseModel):
@@ -95,16 +131,16 @@ class Orchestrator:
             )
             facts = await session_state.update_facts(tenant_id, session_id, facts_patch)
 
-            # An in-progress wizard (Module 19) owns every turn until it completes —
+            # An in-progress wizard (Module 19) owns most turns until it completes —
             # without this, a follow-up answer like "200 devices" would get
             # reclassified from scratch and the wizard would silently stall after
-            # its first question, since nothing else would route back to it.
-            active_wizard = (
-                await WizardSessionRepository(db_session).get_active(tenant_id, session_id)
-                if flags.enable_wizard
-                else None
-            )
-            if active_wizard is not None:
+            # its first question, since nothing else would route back to it. But
+            # it must not be inescapable: a message that deterministically reads
+            # as "get me out of this" (asks for a human, says stop/cancel) breaks
+            # out instead of being force-fed into the wizard as an answer.
+            wizard_repository = WizardSessionRepository(db_session)
+            active_wizard = await wizard_repository.get_active(tenant_id, session_id) if flags.enable_wizard else None
+            if active_wizard is not None and not _looks_like_wizard_escape(message):
                 intent_result = IntentResult(
                     intent="product_recommendation_wizard",
                     confidence=1.0,
@@ -112,6 +148,8 @@ class Orchestrator:
                     candidates=["product_recommendation_wizard"],
                 )
             else:
+                if active_wizard is not None:
+                    await wizard_repository.abandon(tenant_id, session_id)
                 intent_result = await Router(settings.router.intent_taxonomy).classify(
                     message,
                     facts,

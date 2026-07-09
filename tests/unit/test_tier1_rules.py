@@ -34,6 +34,31 @@ def test_tier1_requires_two_hits_for_overlap_group_intents() -> None:
     assert result is None
 
 
+def test_tier1_defers_domain_sensitive_intent_without_catalog_keyword() -> None:
+    """"Compare X vs Y" for unrelated products must not confidently misfire.
+
+    Regression test for a real bug: Tier1's `product_comparison` keywords
+    (compare/vs) are generic English phrasing with no domain awareness, so a
+    message like this used to short-circuit straight to a comparison plan for
+    products Makkays doesn't sell, which then failed against an empty catalog
+    match instead of being classified out_of_scope by the smarter Tier2 pass.
+    """
+    engine = Tier1RuleEngine()
+
+    result = engine.match("Can you compare the MacBook Air M4 vs MacBook Pro M3 for me?")
+
+    assert result is None
+
+
+def test_tier1_matches_domain_sensitive_intent_with_catalog_keyword() -> None:
+    engine = Tier1RuleEngine()
+
+    result = engine.match("Can you compare this switch vs that router?")
+
+    assert result is not None
+    assert result.intent == "product_comparison"
+
+
 def test_tier1_detect_spec_question() -> None:
     engine = Tier1RuleEngine()
 

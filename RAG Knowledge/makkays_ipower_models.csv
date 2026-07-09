@@ -1,0 +1,224 @@
+product_id,product_name,category,subcategory,model_code,capacity,variant,mapping_confidence,resolution_method
+PROD-001,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1001T80207S,1KVA/0.8KW,,verified,source_1to1
+PROD-001,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1002T80407S,2KVA/1.6KW,,verified,source_1to1
+PROD-001,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1003T80607S,3KVA/2.4KW,,verified,source_1to1
+PROD-001,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1006T91607S,6KVA/5.4KW,,verified,source_1to1
+PROD-001,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1010T91607S,10KVA/9KW,,verified,source_1to1
+PROD-002,T-4001 Single Phase (1-10kVA),UPS Solutions,On-line high frequency,OH1001T80300S,1KVA/0.8KW,,verified,source_1to1
+PROD-002,T-4001 Single Phase (1-10kVA),UPS Solutions,On-line high frequency,OH1001T80600S,2KVA/1.6KW,,verified,source_1to1
+PROD-002,T-4001 Single Phase (1-10kVA),UPS Solutions,On-line high frequency,OH1003T80800S,3KVA/2.4KW,,verified,source_1to1
+PROD-002,T-4001 Single Phase (1-10kVA),UPS Solutions,On-line high frequency,OH1006T91600S,6KVA/5.4KW,,verified,source_1to1
+PROD-002,T-4001 Single Phase (1-10kVA),UPS Solutions,On-line high frequency,OH1010T91600S,10KVA/9KW,,verified,source_1to1
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1001T10207S,1KVA/1KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1001T10209S,1KVA/1KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1002T10407S,2KVA/2KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1002T10409S,2KVA/2KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1003T10607S,3KVA/3KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1003T10609S,3KVA/3KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1006T11607S,6KVA/6KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1006T11609S,6KVA/6KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1010T11607S,10KVA/10KW,,verified,model_code_convention
+PROD-003,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1010T11609S,10KVA/10KW,,verified,model_code_convention
+PROD-004,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1001T10300S,1KVA/1KW,,verified,model_code_convention
+PROD-004,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1002T10600S,2KVA/2KW,,verified,model_code_convention
+PROD-004,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1003T10800S,3KVA/3KW,,verified,model_code_convention
+PROD-004,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1006T11600S,6KVA/6KW,,verified,model_code_convention
+PROD-004,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1006T12000S,6KVA/6KW,,verified,model_code_convention
+PROD-004,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1010T11600S,10KVA/10KW,,verified,model_code_convention
+PROD-004,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1010T12000S,10KVA/10KW,,verified,model_code_convention
+PROD-005,T-4001 Single Phase (6-10kVA),UPS Solutions,On-line high frequency,OH1006T91507S,6kVA/5.4kW,,verified,source_1to1
+PROD-005,T-4001 Single Phase (6-10kVA),UPS Solutions,On-line high frequency,OH1006T91600S,6kVA/5.4kW,,verified,source_1to1
+PROD-005,T-4001 Single Phase (6-10kVA),UPS Solutions,On-line high frequency,OH1010T91607S,10kVA/9kW,,verified,source_1to1
+PROD-005,T-4001 Single Phase (6-10kVA),UPS Solutions,On-line high frequency,OH1010T91600S,10kVA/9kW,,verified,source_1to1
+PROD-006,T-4001 Single Phase (1-10KVA),UPS Solutions,On-line high frequency,OH1005T10400S,5kVA/5kW,,verified,source_1to1
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3020T14000B,20kVA/20kW,Standard,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3020T14400S,20kVA/20kW,Long Back-up,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3030T14000B,30kVA/30kW,Standard,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3030T14400S,30kVA/30kW,Long Back-up,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3040T14000B,40kVA/40kW,Standard,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3040T14400S,40kVA/40kW,Long Back-up,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3060T14000B,60kVA/60kW,Standard,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3060T14400S,60kVA/60kW,Long Back-up,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3080T14000B,80kVA/80kW,Standard,verified,source_explicit
+PROD-007,T-4003 Three Phase (20-80kVA),UPS Solutions,On-line high frequency,OH3080T14400S,80kVA/80kW,Long Back-up,verified,source_explicit
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3010T15000S,10KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3020T15000S,20KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3030T15000S,30KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3040T15000S,40KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3060T15000S,60KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3080T15000S,80KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3100T15000S,100KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3120T15000S,120KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3160T15000S,160KVA,,verified,source_1to1
+PROD-008,T-4003 Three Phase (10-180KVA),UPS Solutions,On-line high frequency,OH3180T15000S,180KVA,,verified,source_1to1
+PROD-009,T-4003 Three Phase (300-1200KVA),UPS Solutions,On-line high frequency,OH3300T14400S,300KVA,,verified,source_1to1
+PROD-009,T-4003 Three Phase (300-1200KVA),UPS Solutions,On-line high frequency,OH3400T14400S,400KVA,,verified,source_1to1
+PROD-009,T-4003 Three Phase (300-1200KVA),UPS Solutions,On-line high frequency,OH3500T14400S,500KVA,,verified,source_1to1
+PROD-009,T-4003 Three Phase (300-1200KVA),UPS Solutions,On-line high frequency,OH3600T14400S,600KVA,,verified,source_1to1
+PROD-009,T-4003 Three Phase (300-1200KVA),UPS Solutions,On-line high frequency,OH3800T14800S,800KVA,,verified,source_1to1
+PROD-009,T-4003 Three Phase (300-1200KVA),UPS Solutions,On-line high frequency,OH31M0T14800S,1000KVA,,verified,source_1to1
+PROD-009,T-4003 Three Phase (300-1200KVA),UPS Solutions,On-line high frequency,OH31M2T14800S,1200KVA,,verified,source_1to1
+PROD-010,T-4101 Signle Phase (1-6KVA),UPS Solutions,On-line low frequency,OL1001T80607S,1KVA/0.8KW,,verified,source_1to1
+PROD-010,T-4101 Signle Phase (1-6KVA),UPS Solutions,On-line low frequency,OL1002T80607S,2KVA/1.6KW,,verified,source_1to1
+PROD-010,T-4101 Signle Phase (1-6KVA),UPS Solutions,On-line low frequency,OL1003T80807S,3KVA/2.4KW,,verified,source_1to1
+PROD-010,T-4101 Signle Phase (1-6KVA),UPS Solutions,On-line low frequency,OL1006T81607S,6KVA/4.8KW,,verified,source_1to1
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1001T80600S,1KVA/0.8KW,,verified,model_code_convention
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1002T80600S,2KVA/1.6KW,,verified,model_code_convention
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1003T80800S,3KVA/2.4KW,,verified,model_code_convention
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1006T81600S,6KVA/4.8KW,,verified,model_code_convention
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1006T80800S,6KVA/4.8KW,,verified,model_code_convention
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1008T81600S,8KVA/6.4KW,,verified,model_code_convention
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1010T81600S,10KVA/8KW,,verified,model_code_convention
+PROD-011,T-4101 Signle Phase (1-15kVA),UPS Solutions,On-line low frequency,OL1015T81600S,15KVA/12KW,,verified,model_code_convention
+PROD-012,T-4102 Three Phase (6-30KVA),UPS Solutions,On-line low frequency,OL2006T83200S,6KVA/4.8KW,,verified,source_1to1
+PROD-012,T-4102 Three Phase (6-30KVA),UPS Solutions,On-line low frequency,OL2010T83200S,10KVA/8KW,,verified,source_1to1
+PROD-012,T-4102 Three Phase (6-30KVA),UPS Solutions,On-line low frequency,OL2015T83200S,15KVA/12KW,,verified,source_1to1
+PROD-012,T-4102 Three Phase (6-30KVA),UPS Solutions,On-line low frequency,OL2020T83200S,20KVA/16KW,,verified,source_1to1
+PROD-012,T-4102 Three Phase (6-30KVA),UPS Solutions,On-line low frequency,OL2030T83200S,30KVA/24KW,,verified,source_1to1
+PROD-013,T-4102 Three Phase (10-60KVA),UPS Solutions,On-line low frequency,OL2010T83200S,10KVA/8KW,,verified,source_1to1
+PROD-013,T-4102 Three Phase (10-60KVA),UPS Solutions,On-line low frequency,OL2020T83200S,20KVA/16KW,,verified,source_1to1
+PROD-013,T-4102 Three Phase (10-60KVA),UPS Solutions,On-line low frequency,OL2030T83200S,30KVA/24KW,,verified,source_1to1
+PROD-013,T-4102 Three Phase (10-60KVA),UPS Solutions,On-line low frequency,OL2040T83200S,40KVA/32KW,,verified,source_1to1
+PROD-013,T-4102 Three Phase (10-60KVA),UPS Solutions,On-line low frequency,OL2060T83200S,60KVA/48KW,,verified,source_1to1
+PROD-014,T-4103 Three Phase (10-40KVA),UPS Solutions,On-line low frequency,OL3010T93200S,10KVA/9KW,,verified,source_1to1
+PROD-014,T-4103 Three Phase (10-40KVA),UPS Solutions,On-line low frequency,OL3015T93200S,15KVA/13.5KW,,verified,source_1to1
+PROD-014,T-4103 Three Phase (10-40KVA),UPS Solutions,On-line low frequency,OL3020T93200S,20KVA/18KW,,verified,source_1to1
+PROD-014,T-4103 Three Phase (10-40KVA),UPS Solutions,On-line low frequency,OL3030T93200S,30KVA/27KW,,verified,source_1to1
+PROD-014,T-4103 Three Phase (10-40KVA),UPS Solutions,On-line low frequency,OL3040T93200S,40KVA/36KW,,verified,source_1to1
+PROD-015,T-4103 Three Phase (60-120KVA),UPS Solutions,On-line low frequency,OL3060T93200S,60KVA/54KW,,verified,source_1to1
+PROD-015,T-4103 Three Phase (60-120KVA),UPS Solutions,On-line low frequency,OL3080T93200S,80KVA/72KW,,verified,source_1to1
+PROD-015,T-4103 Three Phase (60-120KVA),UPS Solutions,On-line low frequency,OL3100T93200S,100KVA/90KW,,verified,source_1to1
+PROD-015,T-4103 Three Phase (60-120KVA),UPS Solutions,On-line low frequency,OL3120T93200S,120KVA/108KW,,verified,source_1to1
+PROD-016,T-4103 Three Phase (160-600KVA),UPS Solutions,On-line low frequency,OL3160T93200S,160KVA/144KW,,verified,source_1to1
+PROD-016,T-4103 Three Phase (160-600KVA),UPS Solutions,On-line low frequency,OL3200T93200S,200KVA/180KW,,verified,source_1to1
+PROD-016,T-4103 Three Phase (160-600KVA),UPS Solutions,On-line low frequency,OL3250T93200S,250KVA/225KW,,verified,source_1to1
+PROD-016,T-4103 Three Phase (160-600KVA),UPS Solutions,On-line low frequency,OL3300T93200S,300KVA/270KW,,verified,source_1to1
+PROD-016,T-4103 Three Phase (160-600KVA),UPS Solutions,On-line low frequency,OL3400T93200S,400KVA/360KW,,verified,source_1to1
+PROD-016,T-4103 Three Phase (160-600KVA),UPS Solutions,On-line low frequency,OL3500T93200S,500KVA/450KW,,verified,source_1to1
+PROD-016,T-4103 Three Phase (160-600KVA),UPS Solutions,On-line low frequency,OL3600T93200S,600KVA/540KW,,verified,source_1to1
+PROD-017,T-4111 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OL1001R80600S,1KVA/0.8KW,,verified,source_1to1
+PROD-017,T-4111 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OL1002R80600S,2KVA/1.6KW,,verified,source_1to1
+PROD-017,T-4111 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OL1003R80800S,3KVA/2.4KW,,verified,source_1to1
+PROD-017,T-4111 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OL1006R81600S,6KVA/4.8KW,,verified,source_1to1
+PROD-017,T-4111 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OL1008R81600S,8KVA/6.4KW,,verified,source_1to1
+PROD-017,T-4111 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OL1010R81600S,10KVA/8KW,,verified,source_1to1
+PROD-018,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1001C10207S,1KVA/1KW,,verified,source_1to1
+PROD-018,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1002C10407S,2KVA/2KW,,verified,source_1to1
+PROD-018,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1003C10607S,3KVA/3KW,,verified,source_1to1
+PROD-018,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1006C11607S,6KVA/6KW,,verified,source_1to1
+PROD-018,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1010C11607S,10KVA/10KW,,verified,source_1to1
+PROD-019,T-4011 Single Phase (3-5kVA),UPS Solutions,Rack-Mountable,OH1003R10400S,3KVA,,verified,source_1to1
+PROD-019,T-4011 Single Phase (3-5kVA),UPS Solutions,Rack-Mountable,OH1005R10400S,5KVA,,verified,source_1to1
+PROD-020,T-4011 Single Phase (6-10KVA),UPS Solutions,Rack-Mountable,OH1006R11600L,6kVA/6kW,,verified,source_explicit
+PROD-020,T-4011 Single Phase (6-10KVA),UPS Solutions,Rack-Mountable,OH1006R16000L,6kVA/6kW,,verified,source_explicit
+PROD-020,T-4011 Single Phase (6-10KVA),UPS Solutions,Rack-Mountable,OH1010R11600L,10kVA/10kW,,verified,source_explicit
+PROD-020,T-4011 Single Phase (6-10KVA),UPS Solutions,Rack-Mountable,OH1010R16000L,10kVA/10kW,,verified,source_explicit
+PROD-020,T-4011 Single Phase (6-10KVA),UPS Solutions,Rack-Mountable,OH2010R11600L,10kVA/10kW,,verified,source_explicit
+PROD-021,T-4011 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OH1001C10300S,1KVA/1KW,,verified,source_1to1
+PROD-021,T-4011 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OH1002C10600S,2KVA/2KW,,verified,source_1to1
+PROD-021,T-4011 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OH1003C10800S,3KVA/3KW,,verified,source_1to1
+PROD-021,T-4011 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OH1006C11600S,6KVA/6KW,,verified,source_1to1
+PROD-021,T-4011 Single Phase (1-10kVA),UPS Solutions,Rack-Mountable,OH1010C11600S,10KVA/10KW,,verified,source_1to1
+PROD-022,T-4012 Three Phase (10-20KVA),UPS Solutions,Rack-Mountable,OH2010C81600S,10KVA/8KW,,verified,source_1to1
+PROD-022,T-4012 Three Phase (10-20KVA),UPS Solutions,Rack-Mountable,OH2015C81600S,15KVA/12KW,,verified,source_1to1
+PROD-022,T-4012 Three Phase (10-20KVA),UPS Solutions,Rack-Mountable,OH2020C81600S,20KVA/16KW,,verified,source_1to1
+PROD-022,T-4012 Three Phase (10-20KVA),UPS Solutions,Rack-Mountable,OH2010C92000S,10KVA/9KW,,verified,source_1to1
+PROD-022,T-4012 Three Phase (10-20KVA),UPS Solutions,Rack-Mountable,OH2015C92000S,15KVA/13.5KW,,verified,source_1to1
+PROD-022,T-4012 Three Phase (10-20KVA),UPS Solutions,Rack-Mountable,OH2020C92000S,20KVA/18KW,,verified,source_1to1
+PROD-023,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1001R11200L,1KVA/1KW,,verified,source_1to1
+PROD-023,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1002R12300L,2KVA/2KW,,verified,source_1to1
+PROD-023,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1003R13000L,3KVA/3KW,,verified,source_1to1
+PROD-023,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1006R16000L,6KVA/6KW,,verified,source_1to1
+PROD-023,T-4011 Single Phase (1-10KVA),UPS Solutions,Rack-Mountable,OH1010R16000L,10KVA/10KW,,verified,source_1to1
+PROD-024,T-4011 Single Phase (1-3KVA),UPS Solutions,Rack-Mountable,OH1001R80400L,1KVA/0.8KW,,verified,source_1to1
+PROD-024,T-4011 Single Phase (1-3KVA),UPS Solutions,Rack-Mountable,OH1002R80400L,2KVA/1.6KW,,verified,source_1to1
+PROD-024,T-4011 Single Phase (1-3KVA),UPS Solutions,Rack-Mountable,OH1003R80400L,3KVA/2.4KW,,verified,source_1to1
+PROD-025,T-6003 Three Phase (50-600KVA),UPS Solutions,Modular Series,MH3200U15000S,200KVA,,verified,source_explicit
+PROD-025,T-6003 Three Phase (50-600KVA),UPS Solutions,Modular Series,MH3300U15000S,300KVA,,verified,source_explicit
+PROD-025,T-6003 Three Phase (50-600KVA),UPS Solutions,Modular Series,MH3400U15000S,400KVA,,verified,source_explicit
+PROD-025,T-6003 Three Phase (50-600KVA),UPS Solutions,Modular Series,MH3500U15000S,500KVA,,verified,source_explicit
+PROD-025,T-6003 Three Phase (50-600KVA),UPS Solutions,Modular Series,MH3600U15000S,600KVA,,verified,source_explicit
+PROD-026,T-7701 Single Phase (1.6-6KVA),UPS Solutions,Inverters,IH11X6W10100C,1600VA/1600W,,verified,source_explicit
+PROD-026,T-7701 Single Phase (1.6-6KVA),UPS Solutions,Inverters,H13X2W10200C,3200VA/3200W,,verified,source_explicit
+PROD-026,T-7701 Single Phase (1.6-6KVA),UPS Solutions,Inverters,IH1004W10200C,4000VA/4000W,,verified,source_explicit
+PROD-026,T-7701 Single Phase (1.6-6KVA),UPS Solutions,Inverters,IH1006W10400C,6000VA/6000W,,verified,source_explicit
+PROD-027,T-7701 Single Phase (6-10KVA),UPS Solutions,Inverters,IH1006W10400S,6kVA/6kW,,verified,source_explicit
+PROD-027,T-7701 Single Phase (6-10KVA),UPS Solutions,Inverters,IH1008W10400S,8kVA/8kW,,verified,source_explicit
+PROD-027,T-7701 Single Phase (6-10KVA),UPS Solutions,Inverters,H1010W10400S,10kVA/10kW,,verified,source_explicit
+PROD-028,T-7701 Single Phase (3-5KVA),UPS Solutions,Inverters,IH1003R10200M,3KVA/3KW,,verified,source_explicit
+PROD-028,T-7701 Single Phase (3-5KVA),UPS Solutions,Inverters,IH1003W10200M,3KVA/3KW,,verified,source_explicit
+PROD-028,T-7701 Single Phase (3-5KVA),UPS Solutions,Inverters,IH1005R10400M,5KVA/5KW,,verified,source_explicit
+PROD-028,T-7701 Single Phase (3-5KVA),UPS Solutions,Inverters,IH1005W10400M,5KVA/5KW,,verified,source_explicit
+PROD-029,T-7701 Single Phase (11KVA),UPS Solutions,Inverters,IH1011W10400C,11000VA/11000W,,verified,source_explicit
+PROD-030,T-7703 Three Phase (8-20KVA),UPS Solutions,Inverters,H3010W10400M,10kVA/10kW,,verified,source_explicit
+PROD-030,T-7703 Three Phase (8-20KVA),UPS Solutions,Inverters,IH3012W10400M,12kVA/12kW,,verified,source_explicit
+PROD-030,T-7703 Three Phase (8-20KVA),UPS Solutions,Inverters,IH3015W10400M,15kVA/15kW,,verified,source_explicit
+PROD-030,T-7703 Three Phase (8-20KVA),UPS Solutions,Inverters,IH3020W10400M,20kVA/20kW,,verified,source_explicit
+PROD-031,STS Single Phase (16-32A),UPS Solutions,Accessories,STS22016,16A,,verified,source_explicit
+PROD-031,STS Single Phase (16-32A),UPS Solutions,Accessories,STS22032,32A,,verified,source_explicit
+PROD-032,STS Three Phase (25-200A),UPS Solutions,Accessories,STS380025,25A,,verified,source_explicit
+PROD-032,STS Three Phase (25-200A),UPS Solutions,Accessories,STS380032,32A,,verified,source_explicit
+PROD-032,STS Three Phase (25-200A),UPS Solutions,Accessories,STS380045,45A,,verified,source_explicit
+PROD-032,STS Three Phase (25-200A),UPS Solutions,Accessories,STS380063,63A,,verified,source_explicit
+PROD-032,STS Three Phase (25-200A),UPS Solutions,Accessories,STS380100,100A,,verified,source_explicit
+PROD-032,STS Three Phase (25-200A),UPS Solutions,Accessories,STS380160,160A,,verified,source_explicit
+PROD-032,STS Three Phase (25-200A),UPS Solutions,Accessories,STS380200,200A,,verified,source_explicit
+PROD-036,Li-ion Battery 48VDC-100Ah,Battery Storage Systems,Lithium-ion Battery Packs,RB-LI-48-100,48VDC / 100Ah,,verified,source_explicit
+PROD-037,Li-ion Battery 512VDC-100Ah,Battery Storage Systems,Lithium-ion Battery Packs,RB-LI-410-50,409.8VDC / 50Ah,,verified,model_code_convention
+PROD-037,Li-ion Battery 512VDC-100Ah,Battery Storage Systems,Lithium-ion Battery Packs,RB-LI-512-50,512VDC / 50Ah,,verified,model_code_convention
+PROD-037,Li-ion Battery 512VDC-100Ah,Battery Storage Systems,Lithium-ion Battery Packs,RB-LI-410-100,409.8VDC / 100Ah,,verified,model_code_convention
+PROD-037,Li-ion Battery 512VDC-100Ah,Battery Storage Systems,Lithium-ion Battery Packs,RB-LI-512-100,512VDC / 100Ah,,verified,model_code_convention
+PROD-038,Li-ion Battery 480VDC-100Ah,Battery Storage Systems,Lithium-ion Battery Packs,(not listed in source),,,range_from_name,product_name
+PROD-039,Li-ion Battery 512VDC-200Ah,Battery Storage Systems,Lithium-ion Battery Packs,RB-LI-512-200,512VDC / 200Ah,,verified,source_explicit
+PROD-040,AVR-1001 Single Phase (1-10KVA),Automatic Voltage Regulators,Servo AVR,R100123223S,1KVA,,verified,source_1to1
+PROD-040,AVR-1001 Single Phase (1-10KVA),Automatic Voltage Regulators,Servo AVR,R100223223S,2KVA,,verified,source_1to1
+PROD-040,AVR-1001 Single Phase (1-10KVA),Automatic Voltage Regulators,Servo AVR,R100323223S,3KVA,,verified,source_1to1
+PROD-040,AVR-1001 Single Phase (1-10KVA),Automatic Voltage Regulators,Servo AVR,R100523223S,5KVA,,verified,source_1to1
+PROD-040,AVR-1001 Single Phase (1-10KVA),Automatic Voltage Regulators,Servo AVR,R101023223S,10KVA,,verified,source_1to1
+PROD-041,AVR-1001 Single Phase (20-30KVA),Automatic Voltage Regulators,Servo AVR,R102023223S,20KVA,,verified,source_1to1
+PROD-041,AVR-1001 Single Phase (20-30KVA),Automatic Voltage Regulators,Servo AVR,R103023223S,30KVA,,verified,source_1to1
+PROD-042,AVR-1002 Three Phase (10-80KVA),Automatic Voltage Regulators,Servo AVR,R300140240S,10KVA,,verified,source_1to1
+PROD-042,AVR-1002 Three Phase (10-80KVA),Automatic Voltage Regulators,Servo AVR,R300240240S,20KVA,,verified,source_1to1
+PROD-042,AVR-1002 Three Phase (10-80KVA),Automatic Voltage Regulators,Servo AVR,R300340240S,30KVA,,verified,source_1to1
+PROD-042,AVR-1002 Three Phase (10-80KVA),Automatic Voltage Regulators,Servo AVR,R300540240S,50KVA,,verified,source_1to1
+PROD-042,AVR-1002 Three Phase (10-80KVA),Automatic Voltage Regulators,Servo AVR,R300840240S,80KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R301040240S,100KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R301240240S,120KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R301540240S,150KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R302040240S,200KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R302540240S,250KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R303040240S,300KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R304040240S,400KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R305040240S,500KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R306040240S,600KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R308040240S,800KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R310040240S,1000KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R312540240S,1250KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R315040240S,1500KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R320040240S,2000KVA,,verified,source_1to1
+PROD-043,AVR-1002 Three Phase (100-3000KVA),Automatic Voltage Regulators,Servo AVR,R330040240S,3000KVA,,verified,source_1to1
+PROD-044,AVR-2001 Single Phase (5-30KVA),Automatic Voltage Regulators,Static AVR,T100523223S,5KVA,,verified,source_1to1
+PROD-044,AVR-2001 Single Phase (5-30KVA),Automatic Voltage Regulators,Static AVR,T101023223S,10KVA,,verified,source_1to1
+PROD-044,AVR-2001 Single Phase (5-30KVA),Automatic Voltage Regulators,Static AVR,T101523223S,15KVA,,verified,source_1to1
+PROD-044,AVR-2001 Single Phase (5-30KVA),Automatic Voltage Regulators,Static AVR,T102023223S,20KVA,,verified,source_1to1
+PROD-044,AVR-2001 Single Phase (5-30KVA),Automatic Voltage Regulators,Static AVR,T103023223S,30KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T300140240S,10KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T300240240S,20KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T300340240S,30KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T300540240S,50KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T300840240S,80KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T301040240S,100KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T301240240S,120KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T301540240S,150KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T302040240S,200KVA,,verified,source_1to1
+PROD-045,AVR-2002 Three Phase (10-250KVA),Automatic Voltage Regulators,Static AVR,T302540240S,250KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T303040240S,300KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T304040240S,400KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T305040240S,500KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T306040240S,600KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T308040240S,800KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T310040240S,1000KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T312540240S,1250KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T315040240S,1500KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T320040240S,2000KVA,,verified,source_1to1
+PROD-046,AVR-2002 Three Phase (300-3000KVA),Automatic Voltage Regulators,Static AVR,T330040240S,3000KVA,,verified,source_1to1

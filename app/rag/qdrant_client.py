@@ -32,7 +32,9 @@ class QdrantWrapper:
                 "inside Docker or add qdrant-client to the active environment."
             ) from exc
         api_key = self.settings.qdrant.api_key.get_secret_value()
-        self._client = QdrantClient(url=self.settings.qdrant.url, api_key=api_key)
+        # An explicit timeout keeps a slow/incompatible Qdrant server from hanging
+        # calls forever — without it, qdrant-client's default has no cutoff.
+        self._client = QdrantClient(url=self.settings.qdrant.url, api_key=api_key, timeout=30)
         return self._client
 
     def ensure_collection(

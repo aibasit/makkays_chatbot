@@ -1,0 +1,4 @@
+product_id,product_name,category,subcategory,model_code,capacity,variant,mapping_confidence,resolution_method
+PROD-033,T-8001 MDC (3-10KVA),Data Centers,Smart Micro Data Cabinets (MDC),(not listed in source),3-10KVA,,range_from_name,product_name
+PROD-034,T-8002 MDC (10-20KVA),Data Centers,Smart Micro Data Cabinets (MDC),(not listed in source),10-20KVA,,range_from_name,product_name
+PROD-035,T-800C MDC (20-150KVA),Data Centers,Smart Micro Data Cabinets (MDC),(not listed in source),20-150KVA,,range_from_name,product_name

@@ -42,7 +42,10 @@ class BgeM3Embedder:
                 "FlagEmbedding is required for BGE-M3 embeddings. Install project dependencies "
                 "inside Docker or add FlagEmbedding to the active environment."
             ) from exc
-        self._model = FlagModel(self.model_name, use_fp16=True)
+        # fp16 only pays off on a CUDA device — on CPU, half-precision ops are
+        # largely unoptimized in PyTorch and make inference dramatically slower.
+        use_fp16 = _cuda_available()
+        self._model = FlagModel(self.model_name, use_fp16=use_fp16)
         return self._model
 
     @staticmethod
@@ -54,3 +57,11 @@ class BgeM3Embedder:
         if dense and hasattr(dense[0], "tolist"):
             dense = [item.tolist() for item in dense]
         return [[float(value) for value in vector] for vector in dense]
+
+
+def _cuda_available() -> bool:
+    try:
+        import torch
+    except Exception:
+        return False
+    return bool(torch.cuda.is_available())

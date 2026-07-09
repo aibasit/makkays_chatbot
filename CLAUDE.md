@@ -297,6 +297,54 @@ quantity at all (falls through to the LLM extractor, which may or may not catch 
 Low severity compared to the two bugs above; flagged for a future pass if quantity
 capture proves unreliable in further testing.
 
+### Four more bugs found via a second round of live user testing
+
+1. **Wizard was inescapable.** An active `product_recommendation_wizard`/
+   `solution_builder` session force-routed *every* subsequent message back into
+   itself regardless of content — including explicit refusals like "stop talking
+   to me." Fixed with `_looks_like_wizard_escape()` in
+   `app/orchestrator/orchestrator.py`: a narrow, deterministic check (Tier1's own
+   `human_handoff`/`escalation_request` patterns plus explicit cancel/dismiss
+   keywords, including a few Roman Urdu equivalents — `bas`, `chup`, `dafa`,
+   `khafa`/`lkhafa`) that breaks out via the new
+   `WizardSessionRepository.abandon()`. **Do not** use the general LLM intent
+   classifier for this check — a first attempt did, and it broke legitimate
+   one-word wizard answers ("power", "10") by guessing low-confidence
+   `out_of_scope` for them out of context.
+2. **Wizard/comparison intents leaked outside Makkays' catalog domain.** "Help
+   me choose a MacBook" matched `product_recommendation_wizard`'s Tier2
+   description; "compare MacBook Air vs Pro" matched Tier1's bare `\bcompare\b`
+   keyword. Both confidently misrouted into plans for a product Makkays doesn't
+   sell. Fixed: `classify_intent_v1.md` now explicitly scopes every intent
+   except `out_of_scope`/`human_handoff` to Makkays' product categories, and
+   `Tier1RuleEngine` (`app/router/rules.py`) defers to Tier2 for
+   `_DOMAIN_SENSITIVE_INTENTS` (comparison/compatibility/accessory/alternative/
+   spec-explainer) unless the message also contains a catalog-relevant keyword.
+3. **No targeted follow-up questions, and out-of-scope replies engaged with the
+   off-topic content instead of declining it.** Two new `base_v1.md` rules:
+   ask 2-3 specific missing-detail questions (power load, phase, budget, ...)
+   when a tailored solution is wanted — never during small talk — and
+   explicitly decline (not answer) when `conversation_state.current_intent` is
+   `out_of_scope`, since giving the LLM full conversation context (the earlier
+   fix) meant it would otherwise happily discuss a competitor's product in
+   detail.
+4. **Comparison tables/headings rendered as raw text.** The LLM was already
+   producing correct Markdown; the frontend just displayed it as plain text
+   (literal `|` and `**` characters). Added `react-markdown` + `remark-gfm` to
+   `frontend/` with styled component overrides in `MessageBubble.tsx` — user
+   messages stay plain text, only assistant messages render Markdown.
+
+**Groq rate limits during heavy manual testing:** each turn makes 2-4 Groq
+calls (facts extraction, intent classification, respond, sometimes
+translation), so rapid back-to-back manual testing can hit the free-tier rate
+limit (`429 Too Many Requests`). This degrades gracefully — `Tier2Classifier`
+and `FactsExtractor` both catch the failure and fall back to a safe default
+(`out_of_scope`/`confidence=0.0` for the classifier) rather than crashing — but
+it can look like a "stuck repeating the same reply" bug when it's actually just
+the LLM being unavailable for a few seconds. Check `docker logs
+makkays-chatbot-backend` for `groq_http_error`/`status_code: 429` before
+assuming a classification/facts bug when live-testing rapidly.
+
 ## LLM provider (Module 05 detail)
 
 MVP runs against **Groq Cloud** (`api.groq.com`, OpenAI-compatible), not local Ollama —

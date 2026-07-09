@@ -1,0 +1,8 @@
+tool_name: run_wizard
+allowed_intents:
+  - product_recommendation_wizard
+  - solution_builder
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

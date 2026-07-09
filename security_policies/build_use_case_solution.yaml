@@ -1,0 +1,7 @@
+tool_name: build_use_case_solution
+allowed_intents:
+  - use_case_recommendation
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

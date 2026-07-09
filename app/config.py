@@ -273,6 +273,29 @@ class RagSettings(RedactedModel):
     qdrant_collection_documents: str = "documents_v1"
 
 
+class SolutionBuilderSettings(RedactedModel):
+    """Solution Builder wizard scale-classification thresholds."""
+
+    large_device_threshold: int = 500
+    enterprise_device_threshold: int = 1000
+
+
+class LanguageSettings(RedactedModel):
+    """Multi-language detection and translation configuration."""
+
+    default_language: str = "en"
+    supported_languages: list[str] = Field(default_factory=lambda: ["en", "ur", "ar"])
+    translation_prompt_template: str = "translation/translate_response_v1.md"
+
+
+class AvailabilitySettings(RedactedModel):
+    """Availability/ERP provider configuration."""
+
+    provider: Literal["local", "erp"] = "local"
+    erp_api_base_url: str = ""
+    erp_api_key: SecretStr = SecretStr("")
+
+
 class PromptSettings(RedactedModel):
     """Prompt library configuration."""
 
@@ -411,6 +434,20 @@ class _FlatSettings(BaseSettings):
         default="documents_v1",
         validation_alias="QDRANT_COLLECTION_DOCUMENTS",
     )
+    large_device_threshold: int = Field(default=500, validation_alias="LARGE_DEVICE_THRESHOLD")
+    enterprise_device_threshold: int = Field(default=1000, validation_alias="ENTERPRISE_DEVICE_THRESHOLD")
+    default_language: str = Field(default="en", validation_alias="DEFAULT_LANGUAGE")
+    supported_languages: str = Field(default="en,ur,ar", validation_alias="SUPPORTED_LANGUAGES")
+    translation_prompt_template: str = Field(
+        default="translation/translate_response_v1.md",
+        validation_alias="TRANSLATION_PROMPT_TEMPLATE",
+    )
+    availability_provider: Literal["local", "erp"] = Field(
+        default="local",
+        validation_alias="AVAILABILITY_PROVIDER",
+    )
+    erp_api_base_url: str = Field(default="", validation_alias="ERP_API_BASE_URL")
+    erp_api_key: SecretStr = Field(default=SecretStr(""), validation_alias="ERP_API_KEY")
     crm_max_retry_attempts: int = Field(default=5, validation_alias="CRM_MAX_RETRY_ATTEMPTS")
     crm_retry_worker_interval_seconds: int = Field(
         default=60,
@@ -441,6 +478,9 @@ class Settings(BaseSettings):
     session: SessionSettings
     clarification: ClarificationSettings
     rag: RagSettings
+    solution_builder: SolutionBuilderSettings
+    language: LanguageSettings
+    availability: AvailabilitySettings
     prompts: PromptSettings
     tools: ToolSettings
     logging: LoggingSettings
@@ -501,6 +541,20 @@ class Settings(BaseSettings):
                 search_limit_max=flat.rag_search_limit_max,
                 qdrant_collection_products=flat.qdrant_collection_products,
                 qdrant_collection_documents=flat.qdrant_collection_documents,
+            ),
+            solution_builder=SolutionBuilderSettings(
+                large_device_threshold=flat.large_device_threshold,
+                enterprise_device_threshold=flat.enterprise_device_threshold,
+            ),
+            language=LanguageSettings(
+                default_language=flat.default_language,
+                supported_languages=_split_csv(flat.supported_languages),
+                translation_prompt_template=flat.translation_prompt_template,
+            ),
+            availability=AvailabilitySettings(
+                provider=flat.availability_provider,
+                erp_api_base_url=flat.erp_api_base_url,
+                erp_api_key=flat.erp_api_key,
             ),
             prompts=PromptSettings(library_path=flat.prompt_library_path),
             tools=ToolSettings(policy_directory=flat.security_policy_dir),

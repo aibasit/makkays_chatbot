@@ -235,6 +235,11 @@ class SiteSettings(RedactedModel):
     site_api_key: SecretStr
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     session_cookie_name: str = "sales_engineer_session_id"
+    # "lax"/insecure by default for plain-HTTP local/LAN dev. Cross-site setups (e.g.
+    # frontend and backend on different HTTPS tunnel domains) need "none"/secure=True,
+    # since a SameSite=Lax cookie is dropped on cross-site XHR/fetch requests.
+    session_cookie_samesite: str = "lax"
+    session_cookie_secure: bool = False
     chat_rate_limit_per_minute: int = 20
     max_message_length: int = 4000
 
@@ -457,6 +462,8 @@ class _FlatSettings(BaseSettings):
         default=20, validation_alias="CHAT_RATE_LIMIT_PER_MINUTE"
     )
     max_message_length: int = Field(default=4000, validation_alias="MAX_MESSAGE_LENGTH")
+    session_cookie_samesite: str = Field(default="lax", validation_alias="SESSION_COOKIE_SAMESITE")
+    session_cookie_secure: bool = Field(default=False, validation_alias="SESSION_COOKIE_SECURE")
 
 
 class Settings(BaseSettings):
@@ -528,6 +535,8 @@ class Settings(BaseSettings):
                 cors_allow_origins=_split_csv(flat.cors_allow_origins),
                 chat_rate_limit_per_minute=flat.chat_rate_limit_per_minute,
                 max_message_length=flat.max_message_length,
+                session_cookie_samesite=flat.session_cookie_samesite,
+                session_cookie_secure=flat.session_cookie_secure,
             ),
             router=RouterSettings(
                 classification_confidence_threshold=flat.classification_confidence_threshold,

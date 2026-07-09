@@ -101,8 +101,8 @@ def get_or_create_session_id(request: Request, response: Response, settings: Set
         key=settings.site.session_cookie_name,
         value=session_id,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=settings.site.session_cookie_secure,
+        samesite=settings.site.session_cookie_samesite,  # type: ignore[arg-type]
         max_age=settings.session.conversation_state_ttl_seconds,
     )
     return session_id

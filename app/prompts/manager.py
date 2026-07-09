@@ -13,7 +13,15 @@ from app.prompts.schemas import PromptRef
 
 logger = get_logger(__name__)
 
-PROMPT_CATEGORIES: tuple[str, ...] = ("system", "classification", "rag", "clarification", "tools", "quotes")
+PROMPT_CATEGORIES: tuple[str, ...] = (
+    "system",
+    "classification",
+    "rag",
+    "clarification",
+    "tools",
+    "quotes",
+    "translation",
+)
 
 _VERSION_FILENAME_PATTERN = re.compile(r"_v(\d+)\.md$")
 
@@ -138,6 +146,7 @@ STARTUP_PROMPT_REFERENCES: list[PromptRef] = [
     PromptRef(category="clarification", name="handoff_type_selection", version="1"),
     PromptRef(category="tools", name="tool_instructions", version="1"),
     PromptRef(category="quotes", name="quote_explanation", version="1"),
+    PromptRef(category="translation", name="translate_response", version="1"),
 ]
 
 # Single module-level singleton — callers import `prompt_manager`, they do not

@@ -6,7 +6,15 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-PromptCategory = Literal["system", "classification", "rag", "clarification", "tools", "quotes"]
+PromptCategory = Literal[
+    "system",
+    "classification",
+    "rag",
+    "clarification",
+    "tools",
+    "quotes",
+    "translation",
+]
 
 
 class PromptRef(BaseModel):

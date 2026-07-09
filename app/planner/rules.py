@@ -258,6 +258,54 @@ def plan_availability_inquiry(
     return steps
 
 
+def plan_installation_guidance(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """How to install/set up a product, grounded in installation-guide docs."""
+    steps = ["retrieve_docs", "respond"]
+    assert steps, "plan_installation_guidance must always return at least one step"
+    return steps
+
+
+def plan_troubleshooting(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """A fault/error/not-working report that reads as spec/setup rather than existing support."""
+    steps = ["retrieve_docs", "respond"]
+    assert steps, "plan_troubleshooting must always return at least one step"
+    return steps
+
+
+def plan_warranty_information(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Warranty/RMA/repair questions, grounded in warranty-doc retrieval."""
+    steps = ["retrieve_docs", "respond"]
+    assert steps, "plan_warranty_information must always return at least one step"
+    return steps
+
+
+def plan_pdf_documentation_search(
+    facts: FactsSchema,
+    state: ConversationStateSchema,
+    flags: FeatureFlags,
+    intent_result: IntentResult,
+) -> list[str]:
+    """Requests for a manual/datasheet/brochure — unfiltered doc retrieval."""
+    steps = ["retrieve_docs", "respond"]
+    assert steps, "plan_pdf_documentation_search must always return at least one step"
+    return steps
+
+
 RULE_REGISTRY = {
     "sales_inquiry": plan_sales_inquiry,
     "quote_request": plan_quote_request,
@@ -275,4 +323,8 @@ RULE_REGISTRY = {
     "use_case_recommendation": plan_use_case_recommendation,
     "solution_builder": plan_solution_builder,
     "availability_inquiry": plan_availability_inquiry,
+    "installation_guidance": plan_installation_guidance,
+    "troubleshooting": plan_troubleshooting,
+    "warranty_information": plan_warranty_information,
+    "pdf_documentation_search": plan_pdf_documentation_search,
 }

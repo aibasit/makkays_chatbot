@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import uuid
 
+from app.config import INTENT_TAXONOMY
 from app.flags.schemas import FeatureFlags
 from app.planner.planner import TaskPlanner
+from app.planner.rules import RULE_REGISTRY
 from app.session.schemas import ConversationStateSchema, FactsSchema
 from app.shared.intent_context import IntentResult
 
@@ -231,6 +233,53 @@ def test_plan_solution_builder_both_flags_off_is_respond_only() -> None:
     )
 
     assert plan.steps == ["respond"]
+
+
+def test_every_canonical_intent_has_a_registered_plan_rule() -> None:
+    """Every intent the classifier can return must have a Planner rule.
+
+    Regression test for a real production crash: `installation_guidance`,
+    `troubleshooting`, `warranty_information`, and `pdf_documentation_search`
+    were all part of the classifier's own intent taxonomy (and already had
+    security policies allowing them) but had no RULE_REGISTRY entry — the
+    classifier picking any of them crashed the turn with an unhandled
+    UnknownIntentError and a raw 500, instead of any of pytest's fakes/mocks
+    ever exercising the full taxonomy against the registry to catch it.
+    """
+    missing = [intent for intent in INTENT_TAXONOMY if intent not in RULE_REGISTRY]
+    assert missing == []
+
+
+def test_plan_installation_guidance_retrieves_docs() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("installation_guidance"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["retrieve_docs", "respond"]
+
+
+def test_plan_troubleshooting_retrieves_docs() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("troubleshooting"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["retrieve_docs", "respond"]
+
+
+def test_plan_warranty_information_retrieves_docs() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("warranty_information"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["retrieve_docs", "respond"]
+
+
+def test_plan_pdf_documentation_search_retrieves_docs() -> None:
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("pdf_documentation_search"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["retrieve_docs", "respond"]
 
 
 def test_build_plan_never_returns_empty_steps() -> None:

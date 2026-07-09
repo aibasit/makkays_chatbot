@@ -345,6 +345,58 @@ the LLM being unavailable for a few seconds. Check `docker logs
 makkays-chatbot-backend` for `groq_http_error`/`status_code: 429` before
 assuming a classification/facts bug when live-testing rapidly.
 
+### Structured capacity matching and exhaustive category listing
+
+Two more real gaps found via live testing, both architectural (not prompt/knowledge-doc
+issues — deliberately left those alone per the user's explicit request):
+
+1. **"I need a UPS for my 5kVA load" returned wrong products.** Vector similarity search
+   has no concept of numeric range containment, and `capacity_range` was stored as an
+   unstructured string ("1-10KVA") with no queryable numeric form, so nothing could ever
+   check "does 5 fall within 1-10". Fixed with a new `app/rag/capacity.py`:
+   `parse_capacity_range` turns the catalog's free-text spec into a `(min, max, unit)`
+   tuple; `parse_capacity_requirement` does the same for a client's stated figure in
+   free text ("5kVA", "5000VA", "5kW" — kW/W are treated as approximately equal to kVA —
+   or "20A"). `Product` gained real `capacity_min`/`capacity_max`/`capacity_unit`
+   columns (migration `0013_product_capacity`), auto-derived by
+   `ProductRepository.create()` from any `capacity_range` spec entry — no ingestion
+   script needs to compute this itself. `scripts/backfill_product_capacity.py` populated
+   it for the 46 products already ingested (42 got a value; the 4 battery products have
+   no `capacity_range` spec at all — rated in Ah, not kVA/A — and are correctly left
+   null, excluded from capacity matching rather than mismatched). `FilterExtractor.extract`
+   now takes a `raw_message` param (the current turn's literal text) and parses a
+   requirement from it — the reconstructed `query` it used before (often just
+   `facts.product_interest`, e.g. "UPS system") may not carry the figure the client
+   actually typed this turn. `ProductRepository.find_by_filters` adds a real
+   `capacity_min <= requirement <= capacity_max` SQL condition when one is present.
+2. **A closely-related, genuinely pre-existing bug this surfaced**: a bare "UPS" mention
+   set a `spec_filters["category_hint"] = "ups"` entry, but no product was ever
+   ingested with a `category_hint` spec key — the generic `spec_filters` loop in
+   `find_by_filters` requires an EXISTS match for every entry, so this made the *entire*
+   SQL narrowing query return zero candidates for **any** UPS-related question, silently
+   falling back to fully unscoped semantic search the whole time (candidate_ids=[] is
+   treated as "no scoping" by `_product_qdrant_filter`). This was actively defeating the
+   new capacity fix until caught via direct debugging. Fixed: a bare "UPS" mention now
+   resolves directly to the real category name (e.g. "UPS Solutions") via
+   `_first_category_containing`, instead of a fake spec filter.
+3. **"List all your UPS products" only ever showed 5.** Every retrieval was hard-capped
+   at `min(search_limit_default, search_limit_max)` = 5, because retrieval is
+   fundamentally "top-K by vector similarity," not "enumerate everything." Fixed:
+   `ExtractedFilters.list_all` (detected by `FilterExtractor` via phrasing like "list
+   all", "every option", "what products do you have") makes
+   `RetrievalService.retrieve_products` bypass Qdrant entirely and call the new
+   `ProductRepository.list_products(category=..., brand=..., limit=settings.rag.list_all_limit)`
+   (default 50) — a plain SQL query, ordered by name, with no vector-search truncation.
+4. **The response LLM never saw specs at all.** `ProductResult` only ever carried
+   `product_id/name/brand/category/score`. Now carries a `specs: list[{key, value}]`
+   field too (`ProductRepository.get_specs_for_products`, batched), populated in both
+   the normal vector-search path and the new list-all path — grounding for
+   comparisons/recommendations instead of the LLM inferring numbers from the name string.
+
+Live-verified: "I need a UPS rated for 5kVA" now correctly narrows to the 14 products
+whose range actually contains 5, with real spec data in context; "list all your UPS
+products" now returns the complete ~20-product category instead of 5.
+
 ## LLM provider (Module 05 detail)
 
 MVP runs against **Groq Cloud** (`api.groq.com`, OpenAI-compatible), not local Ollama —

@@ -37,20 +37,147 @@ inside an earlier module.
 | 15 | Public API & Widget Session (`app/api/chat.py`) | Done |
 | 16 | Observability (`app/observability/`) | Done |
 | 17 | Frontend (React/TS/Vite widget) (`frontend/`) | ✅ Done |
-| 18 | Product Intelligence Service | ⬅️ **Next / not started** |
-| 19 | Solution Builder & Recommendation Wizard | Not started |
-| 20 | Human Handoff & Extended Lead Qualification | Not started |
-| 21 | Multi-language (EN/UR/AR) | Not started |
-| 22 | Availability & ERP Bridge | Not started |
+| 18 | Product Intelligence Service (`app/product_intelligence/`) | ✅ Done |
+| 19 | Solution Builder & Recommendation Wizard (`app/solution_builder/`) | ✅ Done |
+| 20 | Human Handoff & Extended Lead Qualification (`app/handoff/`) | ✅ Done |
+| 21 | Multi-language (EN/UR/AR) (`app/language/`) | ✅ Done |
+| 22 | Availability & ERP Bridge (`app/availability/`) | ✅ Done |
 
 Alembic migrations so far: `0001_session_state`, `0002_conversation_turns`,
 `0003_feature_flags`, `0004_tool_audit_log`, `0005_rag_catalog`, `0006_quotes`,
-`0007_crm_leads`.
+`0007_crm_leads`, `0008_product_intelligence`, `0009_solution_builder`,
+`0010_handoff_requests`, `0011_language_support`, `0012_availability`.
 
-**Start here next session:** implement Module 18 (Product Intelligence Service) per
-[md files/18-product-intelligence.md](md%20files/18-product-intelligence.md). Module 16
-provides `app.observability`, `/metrics`, `/ready`, Prometheus counters/histograms, and
-inline metrics from routing, tools, RAG, quotes, CRM, and `/chat` latency.
+**All 22 modules are now implemented, tested, ingested with real catalog data, and
+committed.** There is no "next module" — the backend, frontend, and RAG catalog are all
+in a testable state. If resuming work, start by running the full Docker test suite
+(`docker compose build backend` then the pytest command below) to reconfirm the 210
+passed / 8 skipped baseline, then check `git log --oneline -10` to see the latest work.
+Module 16 provides `app.observability`, `/metrics`, `/ready`, Prometheus counters/
+histograms, and inline metrics from routing, tools, RAG, quotes, CRM, and `/chat`
+latency. Module 21 adds language detection, explicit `/chat/language` session
+preference, translation prompt support, `conversation_state.language_code`, and
+final-response translation for Urdu/Arabic when `ENABLE_MULTI_LANGUAGE=true`. Module 22
+adds the DB-backed local availability service, ERP stub, `product_availability` table,
+`check_availability` tool, and `GET /products/{product_id}/availability`.
+
+### Module 18/19 detail (Product Intelligence + Solution Builder)
+
+Module 18 (`app/product_intelligence/`) adds five tools: `compare_products`,
+`check_compatibility`, `recommend_accessories`, `find_alternatives`,
+`explain_specification` — each gated by its own `enable_*` flag from Module 09 except
+`find_alternatives`/`explain_specification` (ungated). `CompatibilityService` checks
+`compatibility_rules` (migration `0008_product_intelligence`) first, falling back to LLM
+inference (`is_compatible: bool | None`, `None` on LLM failure) only on a rule miss.
+`_infer_compatibility_type` in `app/product_intelligence/__init__.py` scans the current
+message for keywords in a **fixed, explicit order**
+(`("ups", "battery", "controller", "sfp", "rack")`) rather than iterating the
+`COMPATIBILITY_TYPES` frozenset directly — the frozenset's iteration order is
+hash-dependent, which caused non-deterministic rule lookups when a message mentioned two
+keywords at once (e.g. "Is this UPS compatible with the battery?").
+
+Module 19 (`app/solution_builder/`) adds the 5-step `run_wizard` multi-turn flow
+(`WizardService.advance`, steps: use_case → device_count → auto-classified
+project_size → location → brand_preference), `build_use_case_solution` (seeded
+use-case profiles via `scripts/seed_use_case_profiles.py`), and `build_solution` (a
+direct one-shot BOM build when `facts.product_interest`/`facts.quantity` are already
+known — mirrors the `quote_slots_complete` pattern via the new
+`solution_slots_complete(facts, state)` predicate in `app/solution_builder/schemas.py`).
+`Orchestrator.on_turn` special-cases an **active wizard session**: before Router
+classification, it checks `WizardSessionRepository.get_active` and force-routes to the
+`product_recommendation_wizard` intent if one exists — without this, a wizard follow-up
+answer like "200 devices" would get reclassified from scratch and the wizard would
+silently stall after its first question. The ORM model for a built solution is named
+`SolutionRecord` (not `Solution`) to avoid colliding with the `Solution` Pydantic schema.
+`app/planner/rules.py`'s `RULE_REGISTRY` maps three intents to these tools:
+`product_recommendation_wizard` → `run_wizard`; `use_case_recommendation` →
+`build_use_case_solution`; `solution_builder` → `build_solution` if
+`solution_slots_complete`, else falls back to `run_wizard`.
+
+### Module 20/21/22 detail (Handoff, Multi-language, Availability)
+
+These three modules' code, migrations (`0010`–`0012`), security policies, and tests were
+already complete going into this session; verification here consisted of a full code
+read-through plus the green 210-test/8-skipped Docker suite — no functional gaps found.
+`app/handoff/handoff_service.py`'s `infer_target_team` resolves the target team from
+`conversation_state.handoff_target` first, then keyword-scans the current message
+("technical"/"engineer" → technical, "support"/"issue"/"problem" → support, else sales).
+`escalation_request` (clarification-exceeded-rounds) and `human_handoff` (user asked for
+a person) are deliberately separate intents with separate plans — `escalation_request`
+still just returns `["respond"]` per the original v4.1 spec table, it is **not** meant to
+route through `initiate_handoff`.
+
+### RAG catalog data (Module 11, refreshed this session)
+
+The original `I power documents/` folder (ipower only, ~43 products) was replaced by
+[RAG Knowledge/](RAG%20Knowledge/), which adds a second product line (i-Connect, 3
+products) alongside a regenerated i-Power set — 46 products total, sourced from
+`makkays_{ipower,iconnect}_{products,models}.csv` plus two full-catalog `.md` files.
+Since the CSV schema is richer than `IngestionService.ingest_products`'s generic JSON
+format, a new **`scripts/ingest_rag_knowledge.py`** builds `ProductIngestRecord`s
+directly from the CSVs (folding each model-code/capacity row into a `specs` entry) and
+also seeds a **placeholder price** per product (`_capacity_price`: derived from the top
+of the capacity range × a flat per-kVA rate) via `ProductPricingRepository`, since no
+real price list exists for this catalog yet. Run it with:
+
+```bash
+docker compose run --rm --no-deps backend python -m scripts.ingest_rag_knowledge --source-dir "RAG Knowledge" --tenant-id $DEFAULT_TENANT_ID
+```
+
+**Must use `python -m scripts.ingest_rag_knowledge`, not `python scripts/ingest_rag_knowledge.py`**
+— the latter fails with `ModuleNotFoundError: No module named 'app'` because Python only
+puts the script's own directory on `sys.path`, not `/app`; `-m` runs it as a module from
+the working directory instead. The same applies to `scripts/ingest_products_and_docs.py`.
+Ingestion is **not idempotent** — re-running it inserts duplicate rows (`ProductRepository.create`
+always creates, never upserts-by-name). If you need to re-ingest, first
+`DELETE FROM products WHERE tenant_id = ...` (cascades to `product_specs`/`product_pricing`)
+and `DELETE` the `products_v1` Qdrant collection, then run the script exactly once.
+Ingest the two markdown docs separately via the existing M11 script:
+
+```bash
+docker compose run --rm --no-deps backend python -m scripts.ingest_products_and_docs --type docs --source "RAG Knowledge" --tenant-id $DEFAULT_TENANT_ID --doc-type datasheet
+```
+
+### Three real bugs found and fixed while wiring up the RAG catalog end-to-end
+
+1. **`app/rag/embeddings.py`** — `BgeM3Embedder` hardcoded `use_fp16=True` regardless of
+   device. PyTorch's CPU backend has poor/unoptimized fp16 kernel support, so on this
+   CPU-only dev container this made encoding *catastrophically* slow (43 short product
+   texts took 30+ minutes and once appeared to hang for 15 hours). This same code path
+   runs on every live `/chat` request that hits `retrieve_products`/`retrieve_docs`, so
+   it was a real production-facing bug, not just a script problem. Fixed: `use_fp16`
+   is now only `True` when `torch.cuda.is_available()`.
+2. **`app/rag/qdrant_client.py`** — `QdrantClient(...)` was constructed with no
+   `timeout`, so a slow/incompatible server response (this project's qdrant-client
+   1.18.0 vs. the pinned `qdrant/qdrant:v1.11.5` server logs a version-mismatch warning
+   on every connection) could hang a request **forever** with zero error, rather than
+   failing fast. Fixed: explicit `timeout=30`.
+3. **`app/orchestrator/orchestrator.py`** — `tool_calls` for the Module 04 turn-audit
+   log was built via `result.model_dump(mode="json")` on each raw `ToolExecutionResult`
+   (`step`/`success`/`result_summary`/`error`/`product_ids`), but `ConversationTurnCreate.tool_calls`
+   requires each item to contain `tool` and `args` keys per the Module 04 spec's
+   `{tool, args, result_summary}` shape. Every real turn was silently failing that
+   validation and falling back to the spec's designed degradation path
+   (`tool_calls: null`, logged as `ERROR`) — meaning the audit log never actually
+   captured tool-call data for **any** turn, ever. No existing test caught this since
+   nothing exercised `record_turn` with a real multi-step plan result. Fixed: new
+   `_tool_call_record(result)` helper builds the correct shape.
+
+Also added a `huggingface_cache` Docker volume (`docker-compose.yml`, mounted at
+`/root/.cache/huggingface` on the `backend` service) — without it, every ephemeral
+`docker compose run` container had to re-download the ~2.2GB BGE-M3 model from
+HuggingFace from scratch, since `docker compose run --rm` containers don't persist
+anything outside a named volume.
+
+**Known remaining inefficiency (not yet fixed, flagged for a future session):** the
+Docker image installs the default PyPI `torch` wheel, which pulls in the full NVIDIA
+CUDA toolkit (`nvidia-cudnn`, `nvidia-cusparselt`, `nvidia-nccl`, `nvidia-cublas`, etc.)
+as dependencies — multiple GB of downloads this project never uses, since there's no GPU
+in this dev environment. A CPU-only `torch` wheel (via PyTorch's dedicated `/whl/cpu`
+index) would make `docker compose build backend` dramatically faster and far less prone
+to the network-flakiness failures hit repeatedly this session, but pinning the right
+CPU-wheel version needs to be verified against FlagEmbedding's torch constraint before
+committing to it — ask the user before attempting, since it changes a now-working build.
 
 ### Module 17 detail (frontend)
 
@@ -71,6 +198,13 @@ change. `types/chat.ts` is hand-maintained and re-exports the generated types pl
 frontend-only `ChatMessage` shape, so regeneration never clobbers hand-written code.
 Also added a root `.dockerignore` (didn't exist before) once `frontend/node_modules`
 started bloating every backend build context by 100+MB.
+
+Redesigned to a white theme this session (branded header with an "Online now" status
+dot, avatar bubbles, a typing indicator shown while `isLoading`, a pill-shaped input
+with an icon send button, polished clarification chips) — purely visual, no props/API
+contracts changed; all `data-testid`s, ARIA labels, and the `/send/i` accessible button
+name that the existing tests assert on were preserved. `npm run build` and all 22
+Vitest tests pass after the redesign.
 
 ### Module 06/07/08/09/10 detail and the Orchestrator caveat
 
@@ -164,6 +298,12 @@ compose if you ever want the backend to hit cloud Qdrant directly.
 Switching to Ollama: `docker compose --profile ollama up -d ollama` then
 `docker exec -it ollama ollama pull qwen2.5:3b` (persists in `ollama_data` volume).
 
+The `backend` service also mounts a `huggingface_cache` volume at
+`/root/.cache/huggingface` — this persists the ~2.2GB BGE-M3 embedding model download
+across container runs, including ephemeral `docker compose run --rm` invocations (e.g.
+ingestion scripts). Without it, every fresh container had to re-download the full model
+from HuggingFace from scratch.
+
 **Run tests inside Docker, not the host Python** — the host interpreter doesn't have
 project deps installed:
 
@@ -200,9 +340,15 @@ compete for bandwidth and CPU) — use a single backgrounded build and wait for 
 ## Other project docs
 
 - [system_flowchart.md](system_flowchart.md) — architecture flowchart.
-- [I power documents/](I%20power%20documents/) — real product/model data
-  (`makkays_ipower_products.csv`, `makkays_ipower_models.csv`, `.md`) ingested via
-  `scripts/ingest_products_and_docs.py` for M11's RAG catalog.
+- [RAG Knowledge/](RAG%20Knowledge/) — real i-Power + i-Connect product/model data
+  (`makkays_{ipower,iconnect}_{products,models}.csv`, `.md` catalogs) ingested via
+  `scripts/ingest_rag_knowledge.py` (products, with placeholder pricing) and
+  `scripts/ingest_products_and_docs.py` (the two markdown docs) for M11's RAG catalog.
+  Replaced the original `I power documents/` folder this session. The two `.py` files
+  in that folder (`convert_products_v3.py`, `resolve_flagged.py`) are the external,
+  one-off pandas scripts that generated these CSVs from a source spreadsheet — they
+  reference `/mnt/user-data/uploads/...` and `/home/claude/...` paths and are not meant
+  to be re-run inside this repo; they're kept only for provenance.
 
 ## User preferences
 

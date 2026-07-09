@@ -1,0 +1,7 @@
+tool_name: recommend_accessories
+allowed_intents:
+  - accessory_recommendation
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

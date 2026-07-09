@@ -1,0 +1,7 @@
+tool_name: explain_specification
+allowed_intents:
+  - specification_explainer
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

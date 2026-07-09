@@ -1,0 +1,7 @@
+tool_name: check_compatibility
+allowed_intents:
+  - product_compatibility
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

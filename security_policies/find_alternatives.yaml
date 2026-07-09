@@ -1,0 +1,7 @@
+tool_name: find_alternatives
+allowed_intents:
+  - product_alternative
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

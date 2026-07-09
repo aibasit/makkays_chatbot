@@ -1,0 +1,7 @@
+tool_name: compare_products
+allowed_intents:
+  - product_comparison
+required_state: []
+required_slots: []
+rate_limit: "20/min"
+audit_log: false

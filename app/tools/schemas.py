@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.session.schemas import ConversationStateSchema, FactsSchema
+from app.turns.schemas import ConversationTurnRead
 
 
 class SecurityPolicySchema(BaseModel):
@@ -74,3 +75,8 @@ class SessionContext(NamedTuple):
     # sites (tests, other tool modules) that only need tenant/session/facts/state;
     # tools that need the literal message this turn (e.g. the M19 wizard) read this.
     message: str = ""
+    # Prior turns for this session (oldest-to-newest), so the `respond` step's LLM
+    # call has real conversation history instead of only a facts/state snapshot —
+    # without this it can't tell it already asked something, or see what the user
+    # actually said last turn. Defaults to [] for existing call sites.
+    recent_turns: tuple[ConversationTurnRead, ...] = ()

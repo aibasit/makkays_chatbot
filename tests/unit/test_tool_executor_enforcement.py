@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 import app.tools.executor as executor_module
 from app.flags.schemas import FeatureFlags
+from app.llm.schemas import LLMResponse
 from app.planner.schemas import Plan
 from app.session.schemas import ConversationStateSchema, FactsSchema
 from app.tools.exceptions import PlanViolationError
 from app.tools.executor import ToolExecutor
 from app.tools.policy import SecurityPolicy
 from app.tools.registry import ToolRegistry
-from app.tools.schemas import SecurityPolicySchema, SessionContext, ToolExecutionResult
+from app.tools.schemas import ExecutionContext, SecurityPolicySchema, SessionContext, ToolExecutionResult
+from app.turns.schemas import ConversationTurnRead
 
 
 class FakeRedis:
@@ -173,3 +176,56 @@ async def test_policy_denial_is_recorded_as_failed_result(monkeypatch: pytest.Mo
     assert result is not None
     assert result.success is False
     assert "intent" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_respond_tool_passes_full_context_to_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: `respond` must see the real message, history, and retrieved
+    sources — not just a facts/state snapshot. A prior bug dropped all three,
+    which meant the LLM couldn't tell it had already asked something, couldn't see
+    what the user actually said, and had nothing to ground its answer in.
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_build_llm_messages(**kwargs: Any) -> tuple[list[Any], Any]:
+        captured.update(kwargs)
+        return [], None
+
+    class _FakeLLMClient:
+        async def chat(self, *args: Any, **kwargs: Any) -> LLMResponse:
+            return LLMResponse(content="ok")
+
+    monkeypatch.setattr(executor_module, "build_llm_messages", _fake_build_llm_messages)
+    monkeypatch.setattr(executor_module, "get_llm_client", lambda settings: _FakeLLMClient())
+
+    tenant_id = uuid.uuid4()
+    turn = ConversationTurnRead(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        session_id="s1",
+        turn_number=1,
+        user_message="hi",
+        assistant_message="hello",
+        created_at=datetime.now(UTC),
+    )
+    product_result = ToolExecutionResult(
+        step="retrieve_products",
+        success=True,
+        result_summary='[{"product_id":"' + str(uuid.uuid4()) + '","name":"T-4001 UPS","score":0.9}]',
+    )
+    session = SessionContext(
+        tenant_id=tenant_id,
+        session_id="s1",
+        facts=FactsSchema(tenant_id=tenant_id, session_id="s1"),
+        conversation_state=ConversationStateSchema(tenant_id=tenant_id, session_id="s1"),
+        message="Tell me about the T-4001",
+        recent_turns=(turn,),
+    )
+    context = ExecutionContext(retrieve_products=product_result)
+
+    result = await executor_module._respond_tool(session, context)
+
+    assert result.success is True
+    assert captured["latest_user_message"] == "Tell me about the T-4001"
+    assert captured["recent_turns"] == [turn]
+    assert captured["retrieved_sources"][0]["name"] == "T-4001 UPS"

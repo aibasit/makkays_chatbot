@@ -97,6 +97,25 @@ def _values_equal(existing: Any, new: Any) -> bool:
     return existing == new
 
 
+_EXPLICIT_WORD_PATTERN = re.compile(r"[a-z0-9]{3,}")
+
+
+def _explicit_in_message(value: Any, message: str) -> bool:
+    """Return whether the new value is actually grounded in the current message.
+
+    An LLM-extracted value can come from anywhere in the conversation history it
+    was given, not just the latest message — per readme.md §6, a conflicting
+    value only replaces the old one when it is explicit in the *latest* message.
+    Approximated here as: at least one meaningful word of the new value appears
+    literally in the current message.
+    """
+    if not isinstance(value, str):
+        return False
+    words = _EXPLICIT_WORD_PATTERN.findall(value.lower())
+    lowered_message = message.lower()
+    return any(word in lowered_message for word in words)
+
+
 class FactsExtractor:
     """Sole facts-extraction entrypoint; runs after facts/state/recent turns are loaded."""
 
@@ -145,14 +164,25 @@ class FactsExtractor:
                 if normalized is None:
                     continue
                 existing = getattr(facts, field)
-                if existing is not None:
-                    if not _values_equal(existing, normalized):
-                        # LLM-inferred values are not guaranteed explicit in the
-                        # latest message, so an existing value wins on conflict.
+                if existing is not None and not _values_equal(existing, normalized):
+                    if _explicit_in_message(normalized, message):
+                        # The new value is explicit in the latest message (e.g. the
+                        # user is correcting themselves), so it replaces the old one.
+                        patch[field] = normalized
+                        logger.info(
+                            "facts_field_updated",
+                            extra={"field": field, "session_id": facts.session_id},
+                        )
+                    else:
+                        # Otherwise the LLM may have inferred this from older
+                        # conversation history rather than the latest message, so
+                        # the existing explicit value wins on conflict.
                         logger.info(
                             "facts_conflict_preserved",
                             extra={"field": field, "session_id": facts.session_id},
                         )
+                    continue
+                if existing is not None:
                     continue
                 patch[field] = normalized
 

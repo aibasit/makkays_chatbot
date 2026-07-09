@@ -6,6 +6,9 @@ Task Planner. The LLM never decides which business tools run.
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cache.redis_client import get_redis
@@ -191,12 +194,35 @@ async def _respond_tool(session: SessionContext, context: ExecutionContext) -> T
         system_prompt=system_prompt,
         facts=session.facts,
         state=session.conversation_state,
+        recent_turns=list(session.recent_turns),
+        retrieved_sources=_retrieved_sources(context),
+        latest_user_message=session.message,
     )
     try:
         response = await llm_client.chat(messages)
     except Exception as exc:
         return ToolExecutionResult(step="respond", success=False, result_summary="", error=str(exc))
     return ToolExecutionResult(step="respond", success=True, result_summary=response.content or "")
+
+
+def _retrieved_sources(context: ExecutionContext) -> list[dict[str, Any]]:
+    """Flatten retrieve_products/retrieve_docs JSON summaries into source dicts.
+
+    Without this, `respond`'s LLM call has no grounding in what was actually
+    retrieved and can only guess based on the facts/state snapshot — which is how
+    it ended up inventing detailed answers about products never in the catalog.
+    """
+    sources: list[dict[str, Any]] = []
+    for result in (context.retrieve_products, context.retrieve_docs):
+        if result is None or not result.success or not result.result_summary:
+            continue
+        try:
+            parsed = json.loads(result.result_summary)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, list):
+            sources.extend(item for item in parsed if isinstance(item, dict))
+    return sources
 
 
 async def _compare_tool(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult:

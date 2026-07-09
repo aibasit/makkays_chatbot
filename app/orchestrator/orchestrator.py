@@ -198,6 +198,7 @@ class Orchestrator:
                 facts=facts,
                 conversation_state=state,
                 message=message,
+                recent_turns=tuple(recent_turns),
             )
             executor = ToolExecutor(db_session, policy_registry)
             results = await executor.execute_plan(plan, session_context, flags)

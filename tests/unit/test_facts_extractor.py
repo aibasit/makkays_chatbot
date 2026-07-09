@@ -110,6 +110,35 @@ async def test_extract_llm_conflict_is_preserved_not_overwritten() -> None:
 
 
 @pytest.mark.asyncio
+async def test_extract_llm_conflict_replaced_when_explicit_in_current_message() -> None:
+    """A user correcting themselves (e.g. "no, I need a UPS") must win, not be discarded.
+
+    Regression test for a real bug: once product_interest was set to "camera" from
+    an earlier message, the extractor kept preserving it forever even when the user
+    explicitly and repeatedly restated a different product in later messages,
+    because the old logic treated every LLM-sourced conflict as ambiguous rather
+    than checking whether the new value was actually grounded in the current
+    message (per readme.md §6: replace only when "explicit in the latest message").
+    """
+    facts = _facts(product_interest="camera system")
+    extractor = FactsExtractor()
+    llm_client = FakeLLMClient(
+        '{"company": null, "industry": null, "product_interest": "UPS", "project_size": null}'
+    )
+
+    patch = await extractor.extract(
+        "No. I need a UPS system",
+        facts,
+        _state(),
+        [],
+        FakePromptProvider(),
+        llm_client,
+    )
+
+    assert patch.product_interest == "UPS"
+
+
+@pytest.mark.asyncio
 async def test_extract_llm_fills_missing_field() -> None:
     facts = _facts()
     extractor = FactsExtractor()

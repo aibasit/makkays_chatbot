@@ -1,0 +1,9 @@
+tool_name: check_availability
+allowed_intents:
+  - availability_inquiry
+  - sales_inquiry
+  - solution_builder
+required_state: []
+required_slots: []
+rate_limit: "30/min"
+audit_log: false

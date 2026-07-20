@@ -229,3 +229,48 @@ async def test_respond_tool_passes_full_context_to_llm(monkeypatch: pytest.Monke
     assert captured["latest_user_message"] == "Tell me about the T-4001"
     assert captured["recent_turns"] == [turn]
     assert captured["retrieved_sources"][0]["name"] == "T-4001 UPS"
+
+
+@pytest.mark.asyncio
+async def test_respond_tool_signals_no_match_when_a_grounding_step_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test for a real bug found live: the wizard's plan is just
+    `["run_wizard", "respond"]` with no `retrieve_products` step, so when
+    `run_wizard` failed (a power-only catalog has no "switch" products, but
+    the BOM builder always required one), `respond` had zero real product
+    data and invented fictional competitor UPS models (Eaton, APC, Vertiv)
+    with fabricated specs. `respond` must now inject an explicit "no match
+    found" notice into the context whenever a grounding step failed, so the
+    LLM has a clear signal to say so honestly instead of filling the gap.
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_build_llm_messages(**kwargs: Any) -> tuple[list[Any], Any]:
+        captured.update(kwargs)
+        return [], None
+
+    class _FakeLLMClient:
+        async def chat(self, *args: Any, **kwargs: Any) -> LLMResponse:
+            return LLMResponse(content="ok")
+
+    monkeypatch.setattr(executor_module, "build_llm_messages", _fake_build_llm_messages)
+    monkeypatch.setattr(executor_module, "get_llm_client", lambda settings: _FakeLLMClient())
+
+    tenant_id = uuid.uuid4()
+    session = SessionContext(
+        tenant_id=tenant_id,
+        session_id="s1",
+        facts=FactsSchema(tenant_id=tenant_id, session_id="s1"),
+        conversation_state=ConversationStateSchema(tenant_id=tenant_id, session_id="s1"),
+        message="My power requirement is 20KVA, suggest me a UPS",
+    )
+    failed_wizard = ToolExecutionResult(
+        step="run_wizard", success=False, result_summary="", error="No products found for category 'switch'"
+    )
+    context = ExecutionContext(run_wizard=failed_wizard)
+
+    result = await executor_module._respond_tool(session, context)
+
+    assert result.success is True
+    notices = [s for s in captured["retrieved_sources"] if "notice" in s]
+    assert len(notices) == 1
+    assert "no specific product model" in notices[0]["notice"].lower() or "no match" in notices[0]["notice"].lower()

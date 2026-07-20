@@ -1,4 +1,4 @@
-"""Ingest the Makkays i-Power / i-Connect product catalog from `RAG Knowledge/` CSVs.
+"""Ingest the Interconnect Solutions i-Power / i-Connect product catalog from `RAG Knowledge/` CSVs.
 
 The CSVs (`makkays_{domain}_products.csv` + `makkays_{domain}_models.csv`) are richer
 than the generic JSON format `IngestionService.ingest_products` expects, so this script
@@ -80,7 +80,7 @@ def _build_records(source_dir: Path, domain: str) -> list[tuple[ProductIngestRec
         description = " ".join(filter(None, [row["short_description"], row["product_info"]]))
         record = ProductIngestRecord(
             name=row["display_name"] or row["title"],
-            brand="Makkays",
+            brand="Interconnect Solutions",
             category=row["category"],
             description=description,
             specs=specs,
@@ -89,7 +89,7 @@ def _build_records(source_dir: Path, domain: str) -> list[tuple[ProductIngestRec
     return pairs
 
 
-async def _run(source_dir: Path, tenant_id: UUID) -> None:
+async def _run(source_dir: Path, tenant_id: UUID, domains: tuple[str, ...]) -> None:
     settings = get_settings()
     initialize_database(settings)
     try:
@@ -101,7 +101,7 @@ async def _run(source_dir: Path, tenant_id: UUID) -> None:
             print("Qdrant collections ready.", flush=True)
             pricing_repository = ProductPricingRepository(session)
             total = 0
-            for domain in _DOMAINS:
+            for domain in domains:
                 pairs = _build_records(source_dir, domain)
                 if not pairs:
                     continue
@@ -155,8 +155,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest RAG Knowledge product CSVs with placeholder pricing.")
     parser.add_argument("--source-dir", default="RAG Knowledge")
     parser.add_argument("--tenant-id", required=True)
+    parser.add_argument(
+        "--domains",
+        default=",".join(_DOMAINS),
+        help="Comma-separated subset of domains to ingest (default: all).",
+    )
     args = parser.parse_args()
-    asyncio.run(_run(Path(args.source_dir), UUID(args.tenant_id)))
+    domains = tuple(d.strip() for d in args.domains.split(",") if d.strip())
+    asyncio.run(_run(Path(args.source_dir), UUID(args.tenant_id), domains))
 
 
 if __name__ == "__main__":

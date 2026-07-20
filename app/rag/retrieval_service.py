@@ -19,13 +19,48 @@ from app.rag.exceptions import RagQueryError
 from app.rag.filter_extraction import FilterExtractor
 from app.rag.qdrant_client import QdrantWrapper
 from app.rag.repository import DocumentRepository, ProductRepository
-from app.rag.schemas import DocResult, ProductResult
+from app.rag.schemas import Constraint, DocResult, ExtractedFilters, ProductResult
 from app.tools.schemas import ExecutionContext, SessionContext, ToolExecutionResult
 
 logger = get_logger(__name__)
 
 PRODUCT_COLLECTION = "products_v1"
 DOCUMENT_COLLECTION = "documents_v1"
+
+# Lowest-priority first — `_relax_and_retry` drops constraints in this order
+# when the full constraint set matches zero products, so the *most* specific,
+# defining requirements (capacity, series, voltage/current) survive longest
+# and only genuinely secondary preferences (sub-category, battery mode, form
+# factor, ...) are relaxed first. See `RetrievalService._relax_and_retry`.
+_RELAXATION_PRIORITY: tuple[str, ...] = (
+    "service_life_type", "sub_category_key", "product_type_key",
+    "battery_mode", "form_factor_key", "chemistry_key", "technology_key",
+    "parallel_capable", "max_parallel_units", "service_life_years",
+    "power_factor", "voltage_class_v", "max_discharge_power_kw",
+    "phase_input_count", "phase_output_count",
+    "current_a", "capacity_ah", "energy_kwh", "nominal_voltage_vdc",
+    "series_key", "capacity_kva",
+)
+_FIELD_LABELS: dict[str, str] = {
+    "capacity_kva": "capacity (kVA)",
+    "power_factor": "power factor",
+    "current_a": "current rating",
+    "phase_input_count": "input phase",
+    "phase_output_count": "output phase",
+    "form_factor_key": "form factor",
+    "battery_mode": "battery configuration",
+    "parallel_capable": "parallel capability",
+    "technology_key": "technology",
+    "voltage_class_v": "voltage class",
+    "nominal_voltage_vdc": "voltage",
+    "capacity_ah": "capacity (Ah)",
+    "energy_kwh": "energy (kWh)",
+    "chemistry_key": "chemistry",
+    "series_key": "series",
+    "max_discharge_power_kw": "max discharge power",
+    "max_parallel_units": "max parallel units",
+    "service_life_years": "service life",
+}
 
 
 class RetrievalService:
@@ -65,11 +100,16 @@ class RetrievalService:
 
         if filters.list_all:
             # An exhaustive listing request — top-K vector search would silently
-            # truncate a large category, so bypass Qdrant entirely.
+            # truncate a large category, so bypass Qdrant entirely. Constraints
+            # are still applied here (not just category/brand) — "list all
+            # tower UPS" must list all tower UPS, not the entire UPS category;
+            # the two SQL paths share `_build_conditions` in the repository so
+            # they can't silently drift apart on what "matches" means.
             products = await self.product_repository.list_products(
                 session.tenant_id,
                 category=filters.category,
                 brand=filters.brand,
+                constraints=filters.constraints,
                 limit=self._list_all_limit(),
             )
             results = await self._map_products_direct(session.tenant_id, products)
@@ -94,6 +134,22 @@ class RetrievalService:
             )
 
         candidate_ids = await self.product_repository.find_by_filters(session.tenant_id, filters)
+        relaxation_notice: str | None = None
+        if candidate_ids is not None and not candidate_ids and filters.constraints:
+            # The hard constraint set matched real product filters but zero
+            # rows — never silently fall back to a fully unscoped search here
+            # (see `_product_qdrant_filter`'s empty-list handling below);
+            # relax one requirement at a time instead so the client is told
+            # specifically what couldn't be matched exactly.
+            candidate_ids, dropped = await self._relax_and_retry(session.tenant_id, filters)
+            if dropped is not None:
+                label = _FIELD_LABELS.get(dropped.field, dropped.field)
+                detail = f" ({dropped.source_text})" if dropped.source_text else ""
+                relaxation_notice = (
+                    f"No exact match for the requested {label}{detail} — showing the "
+                    "closest available alternatives instead of an exact match. Say so "
+                    "plainly rather than presenting these as an exact match."
+                )
         vector = await self._embed_query(query)
         payload_filter = _product_qdrant_filter(session.tenant_id, candidate_ids)
         points = self.qdrant.search(
@@ -109,18 +165,48 @@ class RetrievalService:
                 "tenant_id": str(session.tenant_id),
                 "candidate_count": None if candidate_ids is None else len(candidate_ids),
                 "result_count": len(results),
+                "relaxed": relaxation_notice is not None,
             },
         )
         metrics.metrics_registry.increment_rag_hit(hit=bool(results))
+        result_dicts: list[dict[str, Any]] = [result.model_dump(mode="json") for result in results]
+        if relaxation_notice:
+            # A plain dict, not a `ProductResult` — `_retrieved_sources` in
+            # `app.tools.executor` flattens any dict in this JSON list into the
+            # `respond`/`explain_specification` LLM context as-is, the same
+            # channel already used for the "no real match, don't invent one"
+            # notice, so this reaches the final answer with no further wiring.
+            result_dicts.append({"notice": relaxation_notice})
         return ToolExecutionResult(
             step="retrieve_products",
             success=True,
-            result_summary=json.dumps(
-                [result.model_dump(mode="json") for result in results],
-                separators=(",", ":"),
-            ),
+            result_summary=json.dumps(result_dicts, separators=(",", ":")),
             product_ids=[result.product_id for result in results],
         )
+
+    async def _relax_and_retry(
+        self, tenant_id: UUID, filters: ExtractedFilters
+    ) -> tuple[list[UUID] | None, Constraint | None]:
+        """Drop the lowest-priority constraint at a time until results appear.
+
+        Never drops every constraint at once — relaxes one requirement, re-runs,
+        and stops at the first removal that produces results, so the caller can
+        report specifically which requirement couldn't be matched exactly
+        rather than silently blending "hard filters found nothing" into an
+        unscoped search. See `_RELAXATION_PRIORITY`.
+        """
+        remaining = list(filters.constraints)
+        dropped: Constraint | None = None
+        while remaining:
+            remaining.sort(
+                key=lambda c: _RELAXATION_PRIORITY.index(c.field) if c.field in _RELAXATION_PRIORITY else -1
+            )
+            dropped = remaining.pop(0)
+            relaxed_filters = filters.model_copy(update={"constraints": list(remaining)})
+            candidate_ids = await self.product_repository.find_by_filters(tenant_id, relaxed_filters)
+            if candidate_ids:
+                return candidate_ids, dropped
+        return None, dropped
 
     async def retrieve_docs(
         self,
@@ -297,9 +383,15 @@ async def retrieve_docs_tool(
 
 
 def _query_from_session(session: SessionContext) -> str:
-    query = session.facts.product_interest or session.conversation_state.last_question
+    # Falls back to the raw current message when neither fact is set — found
+    # live: an exact model-code question ("What are the technology, capacity,
+    # phase, and voltage class of AVR model T300140240S?") sometimes isn't
+    # extracted into `product_interest` by the LLM facts extractor, which used
+    # to make this raise and skip retrieval entirely even though the message
+    # itself carries everything the model-code filter needs.
+    query = session.facts.product_interest or session.conversation_state.last_question or session.message
     if query is None or not query.strip():
-        raise RagQueryError("RAG retrieval requires product_interest or last_question")
+        raise RagQueryError("RAG retrieval requires product_interest, last_question, or a message")
     return query.strip()
 
 

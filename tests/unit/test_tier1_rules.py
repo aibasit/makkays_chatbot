@@ -5,6 +5,21 @@ from __future__ import annotations
 from app.router.rules import Tier1RuleEngine
 
 
+def test_tier1_treats_bare_greeting_as_sales_inquiry_not_out_of_scope() -> None:
+    """Regression test: a bare "Hello" has no domain keyword for Tier2's
+    domain-scoping instructions to latch onto, so it used to fall through to
+    Tier2 and get classified out_of_scope — triggering the "decline, don't
+    engage" prompt rule and producing an oddly curt reply to a simple greeting.
+    """
+    engine = Tier1RuleEngine()
+
+    for message in ["Hello", "hi!", "Hey", "assalam o alaikum", "Good morning"]:
+        result = engine.match(message)
+        assert result is not None, message
+        assert result.intent == "sales_inquiry"
+        assert result.confidence == 1.0
+
+
 def test_tier1_matches_unambiguous_keywords() -> None:
     engine = Tier1RuleEngine()
 

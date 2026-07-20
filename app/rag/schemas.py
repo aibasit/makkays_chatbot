@@ -19,6 +19,35 @@ DocumentType = Literal[
 ]
 
 
+ConstraintOperator = Literal["eq", "gte", "lte", "between", "in", "not_eq", "nearest"]
+
+
+class Constraint(BaseModel):
+    """One deterministic, category-scoped numeric constraint.
+
+    Replaces the old single `capacity_requirement`/`capacity_unit` pair for
+    unit-specific fields (capacity_kva, power_factor, current_a, ...) — a
+    generic capacity filter can't safely tell kVA, A, Ah, and kWh apart, so
+    each field carries its own unit and its own comparison semantics.
+    `nearest` is not a SQL `WHERE` clause — it's a ranking instruction
+    (`ORDER BY ABS(column - value)`), handled specially in
+    `ProductRepository.find_by_filters`/`list_products` rather than as a
+    boolean condition like the other operators.
+    """
+
+    field: str
+    operator: ConstraintOperator
+    # Single comparison value for eq/gte/lte/not_eq/nearest.
+    value: Decimal | str | None = None
+    # Upper bound, only meaningful for operator == "between" (`value` is the lower bound).
+    value_max: Decimal | None = None
+    # Candidate set, only meaningful for operator == "in".
+    values: list[Decimal | str] | None = None
+    unit: str | None = None
+    hard: bool = True
+    source_text: str | None = None
+
+
 class ExtractedFilters(BaseModel):
     """Structured filters extracted deterministically from a retrieval query."""
 
@@ -29,9 +58,15 @@ class ExtractedFilters(BaseModel):
     use_case: str | None = None
     # A client-stated power/capacity requirement (e.g. "5kVA"), parsed by
     # app.rag.capacity.parse_capacity_requirement. min_value == max_value for a
-    # single stated figure; capacity_unit is "KVA" or "A".
+    # single stated figure; capacity_unit is "KVA" or "A". Kept alongside
+    # `constraints` below (not replaced) — existing callers (e.g.
+    # `BOMService`) still build `ExtractedFilters` directly with this pair,
+    # and it remains the fallback for categories with no typed column yet.
     capacity_requirement: Decimal | None = None
     capacity_unit: str | None = None
+    # Category-aware, unit-specific, operator-bearing constraints (see
+    # `Constraint`) — additive to the fields above, not a replacement for them.
+    constraints: list[Constraint] = Field(default_factory=list)
     # Whether the message asks for an exhaustive category/brand listing
     # ("list all your UPS options") rather than a best-match search — see
     # RetrievalService.retrieve_products and ProductRepository.list_products.
@@ -45,6 +80,7 @@ class ExtractedFilters(BaseModel):
             or self.spec_filters
             or self.use_case
             or self.capacity_requirement is not None
+            or self.constraints
         )
 
 

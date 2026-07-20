@@ -32,6 +32,14 @@ class WizardRequirements(BaseModel):
     project_size: ProjectScale | None = None
     location: str | None = None
     brand_preference: str | None = None
+    # A stated power/capacity requirement (e.g. "20kVA"), recovered from the
+    # conversation via app.rag.capacity.parse_capacity_requirement — the wizard's
+    # own questions never ask for this directly, but a visitor typically states
+    # it in the message that triggered the wizard in the first place. Without
+    # it, the "ups" line item can only grab an arbitrary product from the
+    # category rather than one actually sized for the visitor's load.
+    capacity_requirement: Decimal | None = None
+    capacity_unit: str | None = None
 
 
 class BOMLineItem(BaseModel):

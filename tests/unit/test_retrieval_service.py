@@ -103,9 +103,12 @@ class FakeProductRepository:
         *,
         category: str | None = None,
         brand: str | None = None,
+        constraints: list[Any] | None = None,
         limit: int,
     ) -> list[Any]:
-        self.list_products_calls.append({"category": category, "brand": brand, "limit": limit})
+        self.list_products_calls.append(
+            {"category": category, "brand": brand, "constraints": constraints, "limit": limit}
+        )
         return self.list_products_result
 
 
@@ -185,6 +188,47 @@ async def test_retrieval_service_falls_back_to_unscoped_search_when_no_filters_m
     assert result.product_ids == [product_id]
     must = qdrant.calls[0]["payload_filter"]["must"]
     assert must == [{"key": "tenant_id", "match": {"value": str(tenant_id)}}]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_products_falls_back_to_message_when_no_product_interest_or_last_question() -> None:
+    """Regression test for a real bug found live: an exact model-code question
+    ("What are the technology, capacity, phase, and voltage class of AVR model
+    T300140240S?") sometimes isn't extracted into `facts.product_interest` by
+    the LLM facts extractor, and `conversation_state.last_question` is also
+    unset on a first turn — `_query_from_session` used to raise `RagQueryError`
+    in that case, skipping retrieval entirely even though the raw message
+    itself carries the model code the exact-match filter needs.
+    """
+    tenant_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    product = SimpleNamespace(
+        id=product_id,
+        name="AVR-2002 — T300140240S",
+        brand="Interconnect Solutions",
+        category="Automatic Voltage Regulators",
+    )
+    qdrant = FakeQdrant([FakePoint({"tenant_id": str(tenant_id), "product_id": str(product_id)})])
+    service = RetrievalService(
+        db_session=None,  # type: ignore[arg-type]
+        settings=_settings(),
+        product_repository=FakeProductRepository([product_id], {product_id: product}),
+        document_repository=FakeDocumentRepository(),
+        filter_extractor=FilterExtractor(model_codes={"T300140240S"}),
+        embedder=FakeEmbedder(),  # type: ignore[arg-type]
+        qdrant=qdrant,  # type: ignore[arg-type]
+    )
+    session = _session(
+        tenant_id,
+        product_interest=None,
+        message="What are the technology, capacity, phase, and voltage class of AVR model T300140240S?",
+    )
+
+    result = await service.retrieve_products(session, ExecutionContext())
+
+    assert result.success is True
+    assert result.error is None
+    assert result.product_ids == [product_id]
 
 
 @pytest.mark.asyncio
@@ -273,7 +317,7 @@ async def test_retrieve_products_list_all_bypasses_qdrant() -> None:
     tenant_id = uuid.uuid4()
     product_ids = [uuid.uuid4() for _ in range(12)]
     listed_products = [
-        SimpleNamespace(id=pid, name=f"UPS Model {i}", brand="Makkays", category="UPS Solutions")
+        SimpleNamespace(id=pid, name=f"UPS Model {i}", brand="Interconnect Solutions", category="UPS Solutions")
         for i, pid in enumerate(product_ids)
     ]
     qdrant = FakeQdrant([FakePoint({"tenant_id": str(tenant_id), "product_id": str(uuid.uuid4())})])
@@ -305,7 +349,7 @@ async def test_retrieve_products_attaches_full_specs_to_results() -> None:
     not just name/brand/category, which is all it used to get."""
     tenant_id = uuid.uuid4()
     product_id = uuid.uuid4()
-    product = SimpleNamespace(id=product_id, name="T-4111 UPS", brand="Makkays", category="UPS Solutions")
+    product = SimpleNamespace(id=product_id, name="T-4111 UPS", brand="Interconnect Solutions", category="UPS Solutions")
     spec = SimpleNamespace(spec_key="capacity_range", spec_value="1-10kVA")
     qdrant = FakeQdrant([FakePoint({"tenant_id": str(tenant_id), "product_id": str(product_id)})])
     service = RetrievalService(
@@ -315,7 +359,7 @@ async def test_retrieve_products_attaches_full_specs_to_results() -> None:
             [product_id], {product_id: product}, specs={product_id: [spec]}
         ),
         document_repository=FakeDocumentRepository(),
-        filter_extractor=FilterExtractor(brands={"Makkays"}, categories={"switch"}),
+        filter_extractor=FilterExtractor(brands={"Interconnect Solutions"}, categories={"switch"}),
         embedder=FakeEmbedder(),  # type: ignore[arg-type]
         qdrant=qdrant,  # type: ignore[arg-type]
     )

@@ -22,8 +22,10 @@ from app.solution_builder.solution_explainer import SolutionExplainer
 class FakeProductRepository:
     def __init__(self, products_by_category: dict[str, Product]) -> None:
         self.products_by_category = products_by_category
+        self.filters_seen: list[ExtractedFilters] = []
 
     async def find_by_filters(self, tenant_id: uuid.UUID, filters: ExtractedFilters) -> list[uuid.UUID] | None:
+        self.filters_seen.append(filters)
         product = self.products_by_category.get(filters.category or "")
         return [product.id] if product else []
 
@@ -92,6 +94,91 @@ async def test_bom_builds_deterministic_line_items() -> None:
     assert switch_item.subtotal == Decimal("1080.00")
     assert ups_item.quantity == 1  # ceil(9/10)
     assert solution.total_estimate == Decimal("1380.00")
+
+
+@pytest.mark.asyncio
+async def test_bom_finds_ups_products_under_the_real_catalog_category_name() -> None:
+    """Regression test for a real bug found live: this tenant's actual catalog
+    categorizes UPS products as "UPS Solutions", not the generic "ups" the BOM
+    ratio model uses internally — a bare "ups" lookup always found nothing,
+    which (combined with no retrieve_products step in the wizard's plan)
+    left `respond` with zero real product data and led it to hallucinate
+    fictional competitor UPS models instead. The literal "ups" name is tried
+    first (kept for backward compatibility with a literally-named catalog,
+    e.g. in tests), falling back to "UPS Solutions" when that finds nothing.
+    """
+    ups_id = uuid.uuid4()
+    products = {"UPS Solutions": Product(id=ups_id, tenant_id=uuid.uuid4(), name="T-4003 UPS", category="UPS Solutions")}
+    prices = {ups_id: Decimal("2000.00")}
+    service = BOMService(
+        db_session=None,  # type: ignore[arg-type]
+        product_repository=FakeProductRepository(products),
+        pricing_repository=FakePricingRepository(prices),
+    )
+
+    solution = await service.build(WizardRequirements(use_case="power", device_count=20), uuid.uuid4())
+
+    assert len(solution.line_items) == 1
+    assert solution.line_items[0].category == "ups"
+    assert solution.line_items[0].product_name == "T-4003 UPS"
+    assert solution.total_estimate == Decimal("2000.00")
+
+
+@pytest.mark.asyncio
+async def test_bom_passes_capacity_requirement_through_for_the_ups_category() -> None:
+    """Regression test: the wizard never asks for a capacity figure directly,
+    but a visitor typically states one in the message that triggered it (e.g.
+    "My power requirement is 20KVA"). Without threading it through, the "ups"
+    line item could only grab an arbitrary product rather than one sized for
+    the visitor's actual load.
+    """
+    ups_id = uuid.uuid4()
+    products = {"UPS Solutions": Product(id=ups_id, tenant_id=uuid.uuid4(), name="T-4003 UPS", category="UPS Solutions")}
+    prices = {ups_id: Decimal("300.00")}
+    repository = FakeProductRepository(products)
+    service = BOMService(
+        db_session=None,  # type: ignore[arg-type]
+        product_repository=repository,
+        pricing_repository=FakePricingRepository(prices),
+    )
+
+    await service.build(
+        WizardRequirements(
+            use_case="power", device_count=20, capacity_requirement=Decimal("20"), capacity_unit="KVA"
+        ),
+        uuid.uuid4(),
+    )
+
+    ups_filters = next(f for f in repository.filters_seen if f.category == "UPS Solutions")
+    assert ups_filters.capacity_requirement == Decimal("20")
+    assert ups_filters.capacity_unit == "KVA"
+
+
+@pytest.mark.asyncio
+async def test_bom_skips_categories_with_no_products_instead_of_failing() -> None:
+    """Regression test for a real bug found live: a power-only catalog (no
+    "switch" products at all) made every wizard completion fail with
+    InsufficientProductDataError, since `category_quantities` always requires
+    both "switch" and "ups". With no retrieval step in the wizard's plan to
+    fall back on, `respond` then had zero real product data and hallucinated
+    fictional competitor UPS models (Eaton, APC, Vertiv) instead. A category
+    with no matches must be skipped, not fail the whole solution, as long as
+    at least one other required category has a real match.
+    """
+    ups_id = uuid.uuid4()
+    products = {"UPS Solutions": Product(id=ups_id, tenant_id=uuid.uuid4(), name="T-4003 UPS", category="UPS Solutions")}
+    prices = {ups_id: Decimal("2000.00")}
+    service = BOMService(
+        db_session=None,  # type: ignore[arg-type]
+        product_repository=FakeProductRepository(products),
+        pricing_repository=FakePricingRepository(prices),
+    )
+
+    solution = await service.build(WizardRequirements(use_case="power", device_count=20), uuid.uuid4())
+
+    assert len(solution.line_items) == 1
+    assert solution.line_items[0].category == "ups"
+    assert solution.total_estimate == Decimal("2000.00")
 
 
 @pytest.mark.asyncio

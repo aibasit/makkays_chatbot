@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -23,6 +24,26 @@ logger = get_logger(__name__)
 
 _shared_http_client: httpx.AsyncClient | None = None
 _shared_client_key: tuple[str, float] | None = None
+
+# Groq's free tier rate-limits per-second/per-minute windows that are commonly
+# exhausted for a few hundred ms to a couple seconds during a burst of the
+# 2-4 LLM calls one chat turn can make (facts extraction, classification,
+# respond, translation) — not a sign of being fully out of quota. A short,
+# bounded retry clears most of these transparently instead of surfacing a
+# degraded response (stale facts, wrong intent, or the generic "I could not
+# complete that request" fallback) for what is often a sub-second blip.
+_MAX_429_RETRIES = 2
+_RETRY_BACKOFF_SECONDS = (0.6, 1.5)
+
+
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    retry_after = response.headers.get("retry-after")
+    if retry_after is not None:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            pass
+    return _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
 
 
 class GroqClient:
@@ -116,13 +137,22 @@ class GroqClient:
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         client = get_shared_http_client(self.settings)
-        response = await client.post(
-            "/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {self.settings.groq.api_key.get_secret_value()}"},
-        )
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(_MAX_429_RETRIES + 1):
+            response = await client.post(
+                "/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.settings.groq.api_key.get_secret_value()}"},
+            )
+            if response.status_code != 429 or attempt == _MAX_429_RETRIES:
+                response.raise_for_status()
+                return response.json()
+            delay = _retry_delay(response, attempt)
+            logger.warning(
+                "groq_429_retrying",
+                extra={"attempt": attempt + 1, "max_attempts": _MAX_429_RETRIES, "delay_seconds": delay},
+            )
+            await asyncio.sleep(delay)
+        raise AssertionError("unreachable")  # loop always returns or raises
 
 
 def get_shared_http_client(settings: Settings) -> httpx.AsyncClient:

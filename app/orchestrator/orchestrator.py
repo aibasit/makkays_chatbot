@@ -283,11 +283,17 @@ def _tool_call_record(result: ToolExecutionResult) -> dict[str, object]:
 
 
 def _assistant_message_from_results(results: list[ToolExecutionResult]) -> str:
+    """Return the `respond` step's own output, or a user-facing fallback.
+
+    Every other step's `result_summary` (e.g. `compare`'s "Found N candidate
+    products to compare.") is internal audit text meant for the tool-audit log
+    and for `respond` itself to consume as context — never for direct display.
+    Surfacing it here when `respond` fails (LLM error, rate limit, etc.) used
+    to leak that raw internal string straight to the user instead of a
+    friendly error, which read as a broken/confusing reply.
+    """
     for result in reversed(results):
         if result.step == "respond" and result.success and result.result_summary:
-            return result.result_summary
-    for result in reversed(results):
-        if result.success and result.result_summary:
             return result.result_summary
     return "I could not complete that request just now. Please try again with a little more detail."
 

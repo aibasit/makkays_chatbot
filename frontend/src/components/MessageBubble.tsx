@@ -11,7 +11,7 @@ type MessageBubbleProps = {
 function BotAvatar() {
   return (
     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">
-      M
+      IS
     </div>
   );
 }

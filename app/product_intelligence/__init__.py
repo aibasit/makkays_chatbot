@@ -143,18 +143,37 @@ async def find_alternatives_tool(session: SessionContext, context: ExecutionCont
 
 
 async def explain_specification_tool(session: SessionContext, context: ExecutionContext) -> ToolExecutionResult:
-    """Explain the spec term implied by this turn's facts, grounded by any retrieved docs."""
-    spec_term = session.facts.product_interest or session.conversation_state.last_question or ""
+    """Explain the spec term implied by this turn's facts, grounded by any retrieved docs/products.
+
+    This intent is meant for generic terminology ("what is PoE"), but the
+    classifier also routes exact model-code questions here ("what are the
+    specs of OH1005T10400S?") since that phrasing reads like "explain a spec
+    term" — so real product data (not just docs) is included when available,
+    or the LLM has nothing to ground an exact-model answer in at all.
+    """
+    # `session.message` (this turn's literal text) takes priority over the
+    # stored facts — found live in a multi-turn session: `facts.product_interest`
+    # is only updated when the LLM facts extractor recognizes an explicit
+    # conflict, so asking about UPS OH1005T10400S, then battery RB-LI-512-200,
+    # then AVR T300140240S left `product_interest` stuck on "RB-LI-512-200" for
+    # the third turn. Retrieval had already been fixed to correctly scope to
+    # the AVR product via the model code in `session.message`, but this tool
+    # still asked the LLM to explain the stale "RB-LI-512-200" term, so it
+    # ignored the (correct) AVR context and reported no data for the battery
+    # instead of answering about the AVR.
+    spec_term = session.message or session.facts.product_interest or session.conversation_state.last_question or ""
     if not spec_term:
         return ToolExecutionResult(
             step="explain_specification", success=False, result_summary="", error="No term to explain"
         )
 
+    product_context = _product_context_from_result(context.retrieve_products)
     doc_context = _doc_context_from_result(context.retrieve_docs)
+    combined_context = "\n\n".join(part for part in (product_context, doc_context) if part) or None
     settings = get_settings()
     llm_client = get_llm_client(settings)
     service = SpecificationService()
-    explanation = await service.explain(spec_term, doc_context, llm_client)
+    explanation = await service.explain(spec_term, combined_context, llm_client)
     return ToolExecutionResult(step="explain_specification", success=True, result_summary=explanation)
 
 
@@ -193,6 +212,30 @@ def _doc_context_from_result(retrieve_docs_result: ToolExecutionResult | None) -
         return None
     chunks = [str(doc.get("chunk_text") or "") for doc in docs if doc.get("chunk_text")]
     return "\n\n".join(chunks) or None
+
+
+def _product_context_from_result(retrieve_products_result: ToolExecutionResult | None) -> str | None:
+    if (
+        retrieve_products_result is None
+        or not retrieve_products_result.success
+        or not retrieve_products_result.result_summary
+    ):
+        return None
+    try:
+        products: list[dict[str, Any]] = json.loads(retrieve_products_result.result_summary)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    blocks: list[str] = []
+    for product in products:
+        name = str(product.get("name") or "")
+        specs = product.get("specs") or []
+        spec_text = "; ".join(
+            f"{spec.get('key')}: {spec.get('value')}" for spec in specs if spec.get("key")
+        )
+        block = f"{name} — {spec_text}" if spec_text else name
+        if block:
+            blocks.append(block)
+    return "\n".join(blocks) or None
 
 
 def _format_comparison(result: ComparisonResult) -> str:

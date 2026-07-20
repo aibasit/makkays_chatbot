@@ -186,9 +186,18 @@ def plan_specification_explainer(
     flags: FeatureFlags,
     intent_result: IntentResult,
 ) -> list[str]:
-    """Explain a technical term, grounded by retrieved docs when RAG is enabled."""
+    """Explain a technical term, grounded by retrieved docs when RAG is enabled.
+
+    Also retrieves products (not just docs): a message asking for the exact
+    specs of a named model (e.g. "what are the specifications of OH1005T10400S")
+    reads, to the classifier, like "explain a spec term" and lands here rather
+    than in `sales_inquiry` — found live when this plan's lack of a
+    `retrieve_products` step meant `explain_specification` had zero product
+    data to ground an answer in for an exact model-code question.
+    """
     steps = []
     if flags.enable_rag:
+        steps.append("retrieve_products")
         steps.append("retrieve_docs")
     steps.append("explain_specification")
     steps.append("respond")

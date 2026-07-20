@@ -55,6 +55,7 @@ def register_hooks(app: Any, settings: Any) -> None:
     # `import app.rag` would rebind the local name `app` to the top-level `app`
     # package (that's how `import x.y` binds `x`), clobbering the FastAPI `app`
     # parameter for the rest of this function — `from app import rag` avoids it.
+    from app import product_intelligence  # noqa: F401
     from app import rag  # noqa: F401
     from app.availability.tool import check_availability_tool
     from app.crm.service import create_lead_tool

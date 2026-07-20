@@ -84,10 +84,11 @@ SPEC_QUESTION_PATTERNS: list[str] = [
 # for, ...) are generic English phrasing that says nothing about *which* product is
 # being discussed — "compare the MacBook Air vs Pro" matches `\bcompare\b` just as
 # well as a legitimate switch/UPS comparison. For these, Tier1 only trusts its own
-# match if the message also mentions something plausibly in Makkays' catalog;
-# otherwise it defers (returns None) to Tier2, which has the domain-scoping
-# instructions to correctly classify unrelated products as out_of_scope instead of
-# confidently misrouting into a plan that will fail against an empty catalog match.
+# match if the message also mentions something plausibly in Interconnect
+# Solutions' catalog; otherwise it defers (returns None) to Tier2, which has the
+# domain-scoping instructions to correctly classify unrelated products as
+# out_of_scope instead of confidently misrouting into a plan that will fail
+# against an empty catalog match.
 _DOMAIN_SENSITIVE_INTENTS: frozenset[str] = frozenset(
     {
         "product_comparison",
@@ -101,7 +102,21 @@ _DOMAIN_SENSITIVE_INTENTS: frozenset[str] = frozenset(
 _DOMAIN_KEYWORD_PATTERN = re.compile(
     r"\b(switch(?:es)?|router|access point|wi-?fi|ups|avr|voltage regulator|"
     r"battery|batteries|rack|cabinet|network(?:ing)?|poe|sfp|data ?center|"
-    r"makkays|i-?power|i-?connect)\b",
+    r"interconnect solutions|i-?power|i-?connect)\b",
+    re.IGNORECASE,
+)
+
+# A bare greeting with no other content ("Hello", "hi there", "assalam o alaikum")
+# has nothing in it for the domain-scoping instructions in Tier2's prompt to latch
+# onto, so the LLM classifier reasonably reads it as out_of_scope — which then
+# triggers the "decline, don't engage" out-of-scope rule in base_v1.md and produces
+# an oddly curt "that seems off-topic" reply to a simple hello. Treating a pure
+# greeting as sales_inquiry instead (Tier1, before Tier2 is ever called) keeps the
+# existing first-turn-greeting prompt instruction in play without the false
+# off-topic framing.
+_GREETING_ONLY_PATTERN = re.compile(
+    r"^\s*(hi+|hello+|hey+|hola|salam|(as)?salam(u|o)?\s*(a|o)?\s*alaikum|"
+    r"greetings|good\s*(morning|afternoon|evening))[\s!.,]*$",
     re.IGNORECASE,
 )
 
@@ -112,6 +127,14 @@ class Tier1RuleEngine:
     def match(self, message: str) -> IntentResult | None:
         """Return a confident IntentResult only when exactly one intent is unambiguous."""
         lowered = message.lower()
+        if _GREETING_ONLY_PATTERN.match(lowered):
+            return IntentResult(
+                intent="sales_inquiry",
+                confidence=1.0,
+                source="tier1",
+                candidates=["sales_inquiry"],
+                spec_question_detected=False,
+            )
         hits: dict[str, int] = {}
         for intent, patterns in TIER1_RULES.items():
             count = sum(1 for pattern in patterns if re.search(pattern, lowered))

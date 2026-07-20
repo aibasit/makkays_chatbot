@@ -39,6 +39,31 @@ class Product(Base):
     capacity_min: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     capacity_max: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     capacity_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Unit-specific typed columns (migration 0014) — added alongside, not instead
+    # of, capacity_min/max/unit above. That generic pair conflates kVA/A behind
+    # one "unit" string, which can't safely support gte/lte/between operators
+    # across categories with genuinely different units (a battery's 200 Ah and
+    # a UPS's 6 kVA must never be compared against the same requirement). Each
+    # column here is populated only for the category it actually applies to —
+    # e.g. capacity_kva is UPS/AVR only, capacity_ah/energy_kwh are battery
+    # only — and left null everywhere else, the same sparse-column pattern
+    # capacity_min/max/unit already established.
+    capacity_kva: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    rated_power_kw: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    power_factor: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    current_a: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    # Split from one display string ("3-in / 1-out") into two comparable ints
+    # so "three-phase input with single-phase output" is a real `eq` filter on
+    # each side independently, not a substring match against a formatted label.
+    phase_input_count: Mapped[int | None] = mapped_column(nullable=True)
+    phase_output_count: Mapped[int | None] = mapped_column(nullable=True)
+    voltage_class_v: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    nominal_voltage_vdc: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    capacity_ah: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    max_discharge_power_kw: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
+    max_parallel_units: Mapped[int | None] = mapped_column(nullable=True)
+    service_life_years: Mapped[Decimal | None] = mapped_column(Numeric, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -104,6 +104,21 @@ def test_plan_technical_support_always_retrieve_docs_then_respond() -> None:
     assert plan.steps == ["retrieve_docs", "respond"]
 
 
+def test_plan_specification_explainer_retrieves_products_and_docs() -> None:
+    """Regression test for a real bug found live: a message asking for the
+    exact specs of a named model ("what are the specifications of
+    OH1005T10400S?") reads, to the classifier, like "explain a spec term" and
+    lands in `specification_explainer` rather than `sales_inquiry` — this plan
+    used to only retrieve_docs, so `explain_specification` had zero product
+    data to ground an exact model-code answer in.
+    """
+    planner = TaskPlanner()
+
+    plan = planner.build_plan(_intent("specification_explainer"), _facts(), _state(), FeatureFlags())
+
+    assert plan.steps == ["retrieve_products", "retrieve_docs", "explain_specification", "respond"]
+
+
 def test_plan_escalation_request_is_single_respond_step() -> None:
     planner = TaskPlanner()
 

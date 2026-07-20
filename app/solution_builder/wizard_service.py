@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.llm.schemas import LLMClientProtocol
 from app.logging_config import get_logger
+from app.rag.capacity import ParsedCapacity, parse_capacity_requirement
 from app.solution_builder.bom_service import BOMService, ScaleClassifier
 from app.solution_builder.call_for_pricing_service import CallForPricingService
 from app.solution_builder.exceptions import WizardAlreadyCompleteError
@@ -113,14 +114,19 @@ class WizardService:
             )
             return WizardStep(step_number=next_step, question_text=_QUESTIONS.get(next_step), is_complete=False)
 
-        return await self._complete(tenant_id, session_id, requirements)
+        return await self._complete(tenant_id, session_id, requirements, session)
 
-    async def _complete(self, tenant_id: UUID, session_id: str, requirements: dict) -> WizardStep:
+    async def _complete(
+        self, tenant_id: UUID, session_id: str, requirements: dict, session: SessionContext
+    ) -> WizardStep:
+        capacity = _recover_capacity_requirement(session)
         wizard_requirements = WizardRequirements(
             use_case=requirements.get("use_case"),
             device_count=requirements.get("device_count"),
             location=requirements.get("location"),
             brand_preference=requirements.get("brand_preference"),
+            capacity_requirement=capacity.min_value if capacity else None,
+            capacity_unit=capacity.unit if capacity else None,
         )
         scale = self.scale_classifier.classify(wizard_requirements.device_count or 0, wizard_requirements.use_case)
         wizard_requirements.project_size = scale
@@ -147,3 +153,17 @@ class WizardService:
 def _parse_device_count(answer: str) -> int | None:
     match = _DIGITS_PATTERN.search(answer)
     return int(match.group(0)) if match else None
+
+
+def _recover_capacity_requirement(session: SessionContext) -> ParsedCapacity | None:
+    """Recover a stated power/capacity figure (e.g. "20kVA") from the conversation.
+
+    None of the wizard's own 4 questions ask for this directly, but a visitor
+    typically states it in whichever message triggered the wizard — checked
+    most-recent-first so a later correction wins over an earlier mention.
+    """
+    for message in (session.message, *(turn.user_message for turn in reversed(session.recent_turns))):
+        capacity = parse_capacity_requirement(message)
+        if capacity is not None:
+            return capacity
+    return None

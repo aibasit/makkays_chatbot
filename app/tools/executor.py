@@ -190,12 +190,30 @@ async def _respond_tool(session: SessionContext, context: ExecutionContext) -> T
     settings = get_settings()
     llm_client = get_llm_client(settings)
     system_prompt = prompt_manager.get("system", "base", "1")
+    retrieved_sources = _retrieved_sources(context)
+    if _grounding_step_failed(context):
+        # A dedicated recommendation/retrieval step ran and failed (e.g. the
+        # wizard's BOM builder found no matching product for any required
+        # category) — the LLM otherwise has nothing but conversation history
+        # to go on here and, without an explicit signal, tends to fill the gap
+        # with plausible-sounding but entirely invented competitor products.
+        retrieved_sources = [
+            *retrieved_sources,
+            {
+                "notice": (
+                    "No matching product was found in the catalog for this request. "
+                    "Do not name any specific product model or spec — from Interconnect "
+                    "Solutions or any other brand. Say plainly that no match was found "
+                    "and ask for more detail or offer to connect them with the team."
+                ),
+            },
+        ]
     messages, _metadata = build_llm_messages(
         system_prompt=system_prompt,
         facts=session.facts,
         state=session.conversation_state,
         recent_turns=list(session.recent_turns),
-        retrieved_sources=_retrieved_sources(context),
+        retrieved_sources=retrieved_sources,
         latest_user_message=session.message,
     )
     try:
@@ -203,6 +221,22 @@ async def _respond_tool(session: SessionContext, context: ExecutionContext) -> T
     except Exception as exc:
         return ToolExecutionResult(step="respond", success=False, result_summary="", error=str(exc))
     return ToolExecutionResult(step="respond", success=True, result_summary=response.content or "")
+
+
+_GROUNDING_STEPS: tuple[str, ...] = (*_DIRECT_PASSTHROUGH_STEPS, "retrieve_products", "retrieve_docs")
+
+
+def _grounding_step_failed(context: ExecutionContext) -> bool:
+    """Return whether any product-grounding step ran this turn and failed.
+
+    Used only to decide whether `respond` needs an explicit "no match found"
+    signal — a step that never ran at all (not every intent needs one) is not
+    a failure and doesn't trigger this.
+    """
+    return any(
+        (result := getattr(context, step_name, None)) is not None and not result.success
+        for step_name in _GROUNDING_STEPS
+    )
 
 
 def _retrieved_sources(context: ExecutionContext) -> list[dict[str, Any]]:
